@@ -56,10 +56,17 @@ ROOT = Path('/workspace/solu_project/')
 DTYPE = torch.bfloat16
 test_var = 1
 # %%
+import tqdm.auto as tqdm
+for i in tqdm.tqdm(range(1)):
+    print("^ TQDM Should be working")
+# %%
+
 if "ipykernel_launcher" in os.path.basename(sys.argv[0]):
-    %matplotlib inline
-    %load_ext autoreload
-    %autoreload 2
+    from IPython import get_ipython
+    ipython = get_ipython()
+    ipython.magic("matplotlib inline")
+    ipython.magic("load_ext autoreload")
+    ipython.magic("autoreload 2")
     print("Activated reload")
 # %%
 import os
@@ -80,10 +87,20 @@ def cuda_memory():
 
 # %%
 cfg = {
-    'd_model':128,
+    'd_model':736,
+    'normalization':'RMS', # 'LN' 'RMS' or None
+    'model_checkpoint_name':'SoLU_2L_v10_final.pth',
+    'n_layers':2,
+    # 'd_model':1024,
+    # 'normalization':'RMS', # 'LN' 'RMS' or None
+    # 'model_checkpoint_name':'SoLU_1L_v9_final.pth',
+    # 'n_layers':1,
+    # 'd_model':128,
+    # 'normalization':None, # 'LN' 'RMS' or None
+    # 'model_checkpoint_name':'SoLU_1L_v11_final.pth',
+    # 'n_layers':1,
     # 'n_heads':8,
     'd_head':64,
-    'n_layers':1,
     'n_ctx':1024,
     'd_vocab':50278,
     # 'factor_size':256,
@@ -105,7 +122,6 @@ cfg = {
     'act_fn':'SoLU',
     'use_pos_resid':True,
     'attn_only':False,
-    'normalization':None, # 'LN' 'RMS' or None
     'ln_eps':1e-5,
     'version':10,
     'lr_schedule': 'cosine_warmup',
@@ -253,6 +269,7 @@ def animate_scatter(lines_list, snapshot_index = None, snapshot='snapshot', hove
     print([lines_list[:, 1].min(), lines_list[:, 1].max()])
     df = pd.DataFrame(rows, columns=[xaxis, yaxis, snapshot, color_name])
     px.scatter(df, x=xaxis, y=yaxis, animation_frame=snapshot, range_x=[lines_list[:, 0].min(), lines_list[:, 0].max()], range_y=[lines_list[:, 1].min(), lines_list[:, 1].max()], hover_name=hover, color=color_name, **kwargs).show()
+line(np.arange(5))
 # %%
 def loss_fn(logits, batch):
     log_probs = F.log_softmax(logits[:, :-1], dim=-1)
@@ -728,11 +745,10 @@ optimizer = torch.optim.AdamW(model.parameters(),
                               lr=cfg['lr'], 
                               betas=cfg['betas'], 
                               weight_decay=cfg['weight_decay'])
-model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
-model.to(DTYPE)
-
-
-
+# model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
+model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/'+cfg['model_checkpoint_name']))
+model = (model.to(DTYPE))
+print(model)
 # %%
 tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neox-20b')
 pad_token = '<PAD>'
@@ -768,17 +784,20 @@ class MaxActStore():
     top_k: int
     max_acts: torch.Tensor
     index: torch.Tensor
-    def __init__(self, length, name="", top_k = 10, device='cuda', log=True, log_every=50):
+    def __init__(self, length, name="", top_k = 10, device='cuda', log=True, log_every=200, dtype=DTYPE):
         self.length = length
         self.top_k = top_k
         self.name = name
         self.log = log
-        self.max_acts = -torch.inf * torch.ones(length, top_k).to(device).to(DTYPE)
+        print("Mapping max acts to dtype", dtype)
+        self.max_acts = -torch.inf * torch.ones(length, top_k).to(device).to(dtype)
+        # print(self.max_acts)
         self.index = -1 * torch.ones(length, top_k).to(torch.int64).to(device)
         self.counter = 0
         self.total_updates = 0
         self.log_every = log_every
         self.start_time = time.time()
+        self.num_steps = 0
     
     def update(self, x: torch.Tensor):
         """Takes in a (length,) tensor of activations
@@ -787,6 +806,7 @@ class MaxActStore():
             x (torch.Tensor): (length,)
         """
         # print(x.shape, self.max_acts.shape, self.index.shape, self.name, self.counter)
+        # print(self.max_acts)
         threshold, lowest_index = self.max_acts.min(1)
         mask = threshold < x
         new_updates = mask.sum().item()
@@ -803,6 +823,7 @@ class MaxActStore():
         Args:
             x (torch.Tensor): (batch_size, length)
         """
+        # print(self.max_acts)
         acts, indices = x.sort(0, descending=True)
         indices = indices + self.counter
         batch_size = x.size(0)
@@ -818,8 +839,10 @@ class MaxActStore():
             self.max_acts[mask, lowest_index[mask]] = acts[i][mask].detach()
             self.index[mask, lowest_index[mask]] = indices[i][mask]
         self.total_updates += new_updates
-        if self.log and (self.counter % self.log_every == 0):
-            wandb.log({f'{self.name}_max_act': x.max().item(), f'{self.name}_new_updates':new_updates, f'{self.name}_total_updates':self.total_updates, 'num_steps':i, 'elapsed':time.time()-self.start_time}, step=self.counter)
+        self.num_steps += i
+        if self.log and ((self.counter//batch_size) % self.log_every == 0):
+            wandb.log({f'{self.name}_max_act': x.max().item(), f'{self.name}_new_updates':new_updates, f'{self.name}_total_updates':self.total_updates, f'{self.name}_num_steps':self.num_steps, 'elapsed':time.time()-self.start_time}, step=self.counter)
+            self.num_steps = 0
         self.counter += batch_size
     
     def set_counter(self, count):
@@ -924,7 +947,10 @@ for hook in [model.blocks[0].mlp.hook_pre, model.blocks[0].mlp.hook_post, model.
 W_U = model.unembed.W_U
 W_out = model.blocks[0].mlp.W_out
 # [d_vocab, d_mlp]
-W_logit = W_U @ W_out
+if cfg['normalization'] == 'RMS':
+    W_logit = W_U @ (model.norm.w[:, None] * W_out)
+else:
+    W_logit = W_U @ W_out
 
 def direct_logit_attr_hook(act, hook, store):
     # Shape batch, pos, d_mlp
@@ -941,23 +967,123 @@ model.blocks[0].mlp.hook_post_ln.add_hook(partial(update_store_hook, store=store
 # loss.backward()
 # del loss
 # print(stores)
+# if False:
 if do_logging:
     wandb.init(config=cfg, project='max_act_solu')
-    file_path = ROOT/f"max_act_solu_v2_{wandb.run.id}"
+    file_path = ROOT/f"max_act_solu_v2_{str(time.time())}"
     os.mkdir(file_path)
     print("Files will be saved to:", file_path)
 data_loader = DataLoader(dataset, batch_size=batch_size, pin_memory=True)
 data_iter = iter(data_loader)
-schedule = SaveSchedule(10**5)
-for c, batch in enumerate(tqdm.tqdm(data_iter)):
-    tokens = batch['text'].cuda()
-    loss = model(tokens, calc_logits=True, return_type='loss')
-    loss.backward()
-    if schedule.step(batch_size) and do_logging:
-        file_name = file_path/f"{schedule.counter}.pt"
-        save_stores_dict(stores, file_name, do_wandb=do_logging)
-    del loss
-if do_logging:
-    wandb.finish()
-print("Finished!")
+schedule = SaveSchedule(5*10**4)
+if True:
+    print("Starting the loop")
+    try:
+        for c, batch in enumerate(tqdm.tqdm(data_iter)):
+            tokens = batch['text'].cuda()
+            loss = model(tokens, calc_logits=True, return_type='loss')
+            loss.backward()
+            if schedule.step(batch_size) and do_logging:
+                file_name = file_path/f"{schedule.counter}.pt"
+                save_stores_dict(stores, file_name, do_wandb=do_logging)
+            del loss
+    except KeyboardInterrupt:
+        if do_logging:
+            file_name = file_path/f"{schedule.counter}.pt"
+            save_stores_dict(stores, file_name, do_wandb=do_logging)
+    if do_logging:
+        wandb.finish()
+    print("Finished!")
+else:
+    print("Skipped the long max examples loop!")
+# %%
+model.reset_hooks()
+# def update_store_hook(act, hook, store):
+#     act_max = act.max(-2).values
+#     store.batch_update(act_max)
+
+# def cache_act(act, hook):
+#     hook.ctx['act'] = act.detach()
+
+# def get_attr_hook(grad, hook, store):
+#     store.batch_update((grad * hook.ctx['act']).max(-2).values)
+
+# stores = {}
+# for hook in [model.blocks[0].mlp.hook_pre, model.blocks[0].mlp.hook_post, model.blocks[0].mlp.hook_post_ln]:
+#     s = hook.name.split('.')
+#     name = f"{s[1]}{s[3][5:]}"
+#     stores[name] = MaxActStore(cfg['d_mlp'], name=name, log=do_logging)
+#     hook.add_hook(partial(update_store_hook, store=stores[name]))
+#     name = f"{s[1]}{s[3][5:]}_attr"
+#     hook.add_hook(cache_act)
+#     stores[name] = MaxActStore(cfg['d_mlp'], name=name, log=do_logging)
+#     hook.add_hook(partial(get_attr_hook, store=stores[name]), dir='bwd')
+# W_U = model.unembed.W_U
+# W_out = model.blocks[0].mlp.W_out
+# # [d_vocab, d_mlp]
+# if cfg['normalization'] == 'RMS':
+#     W_logit = W_U @ (model.norm.w[:, None] * W_out)
+# else:
+#     W_logit = W_U @ W_out
+
+# def direct_logit_attr_hook(act, hook, store):
+#     # Shape batch, pos, d_mlp
+#     # act has shape batch, pos, d_mlp
+#     store.batch_update((act * W_logit[tokens]).max(-2).values)
+# name = 'logit_attr'
+# stores[name] = MaxActStore(cfg['d_mlp'], name=name, log=do_logging)
+# model.blocks[0].mlp.hook_post_ln.add_hook(partial(update_store_hook, store=stores[name]))
+
+# %%
+def text_to_str_tokens(text, tokenizer=tokenizer):
+    if text.startswith('<|endoftext|>'):
+        return tokenizer.batch_decode(tokenizer.encode(text))
+    else:
+        return tokenizer.batch_decode(tokenizer.encode("<|endoftext|>"+text))
+
+def vis_activations(str_tokens, activations, name="", incl_bos=True):
+    if type(str_tokens)==str:
+        str_tokens = text_to_str_tokens(str_tokens)
+    if incl_bos:
+        pysvelte.TextSingle(tokens=str_tokens, activations=activations[:], neuron_name=name).show()
+    else:
+        pysvelte.TextSingle(tokens=str_tokens[1:], activations=activations[1:], neuron_name=name).show()
+    
+def print_neuron_logits(neuron_index, top_k=5):
+    l = []
+    l.append(f"Top {top_k} logits for Neuron: {neuron_index}")
+    logit_vec, logit_indices = W_logit[:, neuron_index].sort()
+    for i in range(top_k):
+        l.append(f"|{tokenizer.decode([logit_indices[-i-1].item()], clean_up_tokenization_spaces=False)}| {logit_vec[-i-1].item():.6f}")
+    l.append('...')
+    for i in range(top_k):
+        l.append(f"|{tokenizer.decode([logit_indices[top_k-i-1].item()], clean_up_tokenization_spaces=False)}| {logit_vec[top_k-i-1].item():.6f}")
+    print("\n".join(l))
+print_neuron_logits(0)
+to_study = [2, 5, 15, 18]
+# sd = torch.load('/workspace/solu_project/max_acts_128W_1_7m_v2.pth')
+
+# for i in sd:
+#     val, ind = sd[i][1].sort(1, descending=True)
+#     store = MaxActStore
+#     sd[i] = (sd[i][0], val, sd[i][2].gather(-1, ind))
+print("Loading the stores")
+stores_dict = load_stores_dict("/workspace/solu_project/max_act_solu_v2_1662711752.9306793/4328980.pt", cfg['d_mlp'], dtype=torch.float32)
+
+model.reset_hooks()
+cache = {}
+model.to(torch.float32)
+model.cache_all(cache, remove_batch_dim=True)
+neuron_index = 0
+prefix = 'blocks.0.mlp.hook_'
+name = 'post'
+names = ['post', 'post_ln', 'pre']
+for neuron_index in to_study:
+    print_neuron_logits(neuron_index)
+    for example_index in range(10):
+        text_index = stores_dict['0'+name].index[neuron_index, example_index]
+        tokens = dataset[text_index.item()]['text'].unsqueeze(0)
+        model(tokens, calc_logits=False)
+        text = tokenizer.decode(tokens[0])
+        vis_activations(str_tokens=tokenizer.batch_decode(tokens[0]), activations=cache[prefix+name][:, neuron_index], name=f"Act_{name}_N{neuron_index}_#{example_index}")
 # %%
