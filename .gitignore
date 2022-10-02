@@ -1,0 +1,5 @@
+solu/training/cache/*
+solu/training/wandb/*
+*.pth
+solu/training/__pycache__/*
+**/__pycache__/*

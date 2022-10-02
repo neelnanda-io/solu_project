@@ -1,0 +1,10 @@
+README.md
+setup.py
+solu/__init__.py
+solu/download_data_to_disk.py
+solu/transformer.py
+solu.egg-info/PKG-INFO
+solu.egg-info/SOURCES.txt
+solu.egg-info/dependency_links.txt
+solu.egg-info/requires.txt
+solu.egg-info/top_level.txt
