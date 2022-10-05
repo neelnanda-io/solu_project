@@ -1037,6 +1037,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
             batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)*8
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+            
             total_tokens += batch_tokens.item()
             if (c + 1) % cfg["batches_per_step"] == 0:
                 # accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
