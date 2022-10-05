@@ -835,7 +835,7 @@ def create_dataset(cfg, accelerator):
             dataset = dataset.with_format(type="torch")
             accelerator.print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
-            dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
+            # dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
             accelerator.print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
             train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"], num_workers=3)
@@ -934,7 +934,7 @@ class SaveSchedule:
 def main(mixed_precision="bf16", seed: int = 42):
     set_seed(seed)
 
-    accelerator = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=1)
+    accelerator = Accelerator(mixed_precision="bf16", gradient_accumulation_steps=1)
 
     cfg = create_cfg(accelerator)
     assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
@@ -1015,10 +1015,11 @@ def main(mixed_precision="bf16", seed: int = 42):
     loss_ewmas = []
     step = 0
     start_time = time.time()
-    loss_ewma = 9
+    # loss_ewma = 9
+    loss_ewma = torch.tensor(9., device=accelerator.device)
     # loss_beta = 0.95
     total_tokens = 0
-    running_loss = 0
+    running_loss = torch.tensor(0., device=accelerator.device)
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
@@ -1034,7 +1035,8 @@ def main(mixed_precision="bf16", seed: int = 42):
             accelerator.backward(loss)
 
             # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-            running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
+            # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
+            running_loss += loss.detach() * accelerator.gradient_accumulation_steps
             batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)*8
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
             total_tokens += batch_tokens.item()
@@ -1043,7 +1045,7 @@ def main(mixed_precision="bf16", seed: int = 42):
                 optimizer.step()
                 if cfg["lr_schedule"] is not None:
                     scheduler.step()
-                    if accelerator.is_main_process:
+                    if accelerator.is_main_process and step % 100 == 0:
                         wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
                 optimizer.zero_grad()
                 if (
@@ -1069,16 +1071,16 @@ def main(mixed_precision="bf16", seed: int = 42):
                             )
                         wandb.save(f"{model_name}_{step:0>6}.pth")
                 running_loss = running_loss / cfg["batches_per_step"]
-                losses.append(running_loss)
+                # losses.append(running_loss)
 
                 loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
                     1 - cfg["train_loss_ewma_beta"]
                 )
-                loss_ewmas.append(loss_ewma)
-                if accelerator.is_main_process:
+                # loss_ewmas.append(loss_ewma)
+                if accelerator.is_main_process and step % 100 == 0:
                     wandb.log(
                         {
-                            "loss": loss.item() * accelerator.gradient_accumulation_steps,
+                            "loss": running_loss.item() * accelerator.gradient_accumulation_steps,
                             "loss_ewma": loss_ewma,
                             "elapsed": time.time() - start_time,
                             "total_tokens": total_tokens,
@@ -1097,8 +1099,8 @@ def main(mixed_precision="bf16", seed: int = 42):
                 #     }
                 # )
                 running_loss = 0
-                if step % 30 == 0:
-                    accelerator.print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
+                # if step % 30 == 0:
+                #     accelerator.print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
                 step += 1
                 # if step >= cfg["max_steps"]:
                 #     break
