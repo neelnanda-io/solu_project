@@ -57,7 +57,7 @@ def create_cfg():
         "lr": 1e-3,
         "batch_size": 36 * 8,
         "batches_per_step": 1,
-        "seed": 98742,
+        "seed": 987422,
         # 'checkpoint_every_tokens':5*10**7,
         "use_checkpoint_schedule": True,
         "debug": False,

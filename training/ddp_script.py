@@ -835,7 +835,7 @@ def create_dataset(cfg, accelerator):
             dataset = dataset.with_format(type="torch")
             accelerator.print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
-            dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
+            # dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
             accelerator.print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
             train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"], num_workers=3)
@@ -934,7 +934,8 @@ class SaveSchedule:
 def main(mixed_precision="bf16", seed: int = 42):
     set_seed(seed)
 
-    accelerator = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=1)
+    # accelerator = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=1)
+    accelerator = Accelerator(gradient_accumulation_steps=1)
 
     cfg = create_cfg(accelerator)
     assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
@@ -964,12 +965,12 @@ def main(mixed_precision="bf16", seed: int = 42):
         model.to(torch.bfloat16)
     elif cfg["use_float16"]:
         model.to(torch.float16)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg["lr"],
-        betas=cfg["betas"],
-        weight_decay=cfg["weight_decay"],
-    )
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg["lr"],
+    #     betas=cfg["betas"],
+    #     weight_decay=cfg["weight_decay"],
+    # )
     if cfg["lr_schedule"] is not None:
 
         def lr_schedule(step):
@@ -1022,6 +1023,7 @@ def main(mixed_precision="bf16", seed: int = 42):
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
+    print("Starting epoch", epoch)
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         with accelerator.accumulate(model):
             batch = batch["text"]
@@ -1032,15 +1034,21 @@ def main(mixed_precision="bf16", seed: int = 42):
             loss = model(batch)
             # loss = loss / accelerator.num_processes
             accelerator.backward(loss)
+            if c<3:
+                print(batch.shape)
+                batch = accelerator.gather(batch)
+                print(batch.shape)
+            # print(batch[..., 1])
+            # break
 
             # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
             running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
             batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)*8
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
-            
+
             total_tokens += batch_tokens.item()
             if (c + 1) % cfg["batches_per_step"] == 0:
-                # accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
+                accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
                 optimizer.step()
                 if cfg["lr_schedule"] is not None:
                     scheduler.step()
