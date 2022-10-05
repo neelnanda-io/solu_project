@@ -1039,7 +1039,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
             total_tokens += batch_tokens.item()
             if (c + 1) % cfg["batches_per_step"] == 0:
-                accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
+                # accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
                 optimizer.step()
                 if cfg["lr_schedule"] is not None:
                     scheduler.step()
