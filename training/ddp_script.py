@@ -967,12 +967,12 @@ def main(mixed_precision="bf16", seed: int = 42):
         model.to(torch.bfloat16)
     elif cfg["use_float16"]:
         model.to(torch.float16)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg["lr"],
-        betas=cfg["betas"],
-        weight_decay=cfg["weight_decay"],
-    )
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg["lr"],
+    #     betas=cfg["betas"],
+    #     weight_decay=cfg["weight_decay"],
+    # )
     if cfg["lr_schedule"] is not None:
 
         def lr_schedule(step):
@@ -1026,6 +1026,7 @@ def main(mixed_precision="bf16", seed: int = 42):
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
+    print("Starting epoch", epoch)
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         with accelerator.accumulate(model):
             batch = batch["text"]
@@ -1036,12 +1037,19 @@ def main(mixed_precision="bf16", seed: int = 42):
             loss = model(batch)
             # loss = loss / accelerator.num_processes
             accelerator.backward(loss)
+            if c<3:
+                print(batch.shape)
+                batch = accelerator.gather(batch)
+                print(batch.shape)
+            # print(batch[..., 1])
+            # break
 
             # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
             # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
             running_loss += loss.detach() * accelerator.gradient_accumulation_steps
             batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)*8
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+
             total_tokens += batch_tokens.item()
             if (c + 1) % cfg["batches_per_step"] == 0:
                 accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
