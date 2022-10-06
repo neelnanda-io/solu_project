@@ -64,7 +64,7 @@ def create_cfg(accelerator):
         "batches_per_step": 1,
         "seed": 98742,
         # 'checkpoint_every_tokens':5*10**7,
-        "use_checkpoint_schedule": True,
+        "use_checkpoint_schedule": False,
         "debug": False,
         "debug_batch": False,
         "debug_overfit": False,
@@ -100,6 +100,7 @@ def create_cfg(accelerator):
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
+        "initializer_scale": 2.
         # 'W_O_init_scale':True,
     }
     # accelerator.print('Old')
@@ -634,7 +635,7 @@ class MLP(nn.Module):
         elif self.cfg["act_fn"].lower() == "gelu_new":
             self.act_fn = gelu_new
         elif self.cfg["act_fn"].lower() == "solu":
-            self.act_fn = lambda x: F.softmax(x, dim=-1) * x
+            self.act_fn = lambda x: F.softmax(x.to(torch.float32), dim=-1) * x
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
@@ -934,7 +935,7 @@ class SaveSchedule:
 def main(mixed_precision="bf16", seed: int = 42):
     set_seed(seed)
 
-    accelerator = Accelerator(mixed_precision="bf16", gradient_accumulation_steps=1)
+    accelerator = Accelerator(gradient_accumulation_steps=1)
 
     cfg = create_cfg(accelerator)
     assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
@@ -958,7 +959,9 @@ def main(mixed_precision="bf16", seed: int = 42):
         model = AttnOnlyTransformer(cfg, tokenizer)
     else:
         model = Transformer(cfg, tokenizer)
-
+    for name, param in model.named_parameters():
+        if "W_" in name:
+            param.data *= cfg['initializer_scale']
     model.to(accelerator.device)
     if cfg["use_bfloat16"]:
         model.to(torch.bfloat16)

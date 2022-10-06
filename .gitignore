@@ -1,0 +1,5 @@
+*.pth
+training/*.pth
+solu/training/*.pth
+solu/training/cache
+solu/training/wandb
