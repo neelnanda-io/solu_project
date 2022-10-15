@@ -66,12 +66,12 @@ def create_cfg(accelerator):
     cfg = {
         "d_model": 512,
         "n_layers": 4,
-        "lr": 4e-4,
+        "lr": 7e-4,
         "batch_size": 32,
         "batches_per_step": NUM_GRAD_ACC_STEPS,
-        "seed": 98742,
+        "seed": 90312,
         # 'checkpoint_every_tokens':5*10**7,
-        "use_checkpoint_schedule": True,
+        "use_checkpoint_schedule": False,
         "debug": False,
         "debug_batch": False,
         "debug_overfit": False,
@@ -85,12 +85,12 @@ def create_cfg(accelerator):
         "use_bfloat16_matmul": False,
         "right_multiply_matrices": True,
         # 'n_heads':8,
-        "d_head": 128,
+        "d_head": 64,
         "n_ctx": 1024,
         "d_vocab": 50278,
         # 'factor_size':256,
         "betas": (0.9, 0.99),
-        "weight_decay": 0.01,
+        "weight_decay": 0.1,
         "dataset_name": "the_pile",
         # "dataset_name": "wikipedia",
         # "dataset_subset_name": "20220301.en",
@@ -108,6 +108,7 @@ def create_cfg(accelerator):
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
         "use_ET": False,
+        "initializer_scale": 1.,
         # 'W_O_init_scale':True,
     }
     # accelerator.print('Old')
@@ -659,7 +660,7 @@ class MLP(nn.Module):
         elif self.cfg["act_fn"].lower() == "gelu_new":
             self.act_fn = gelu_new
         elif self.cfg["act_fn"].lower() == "solu":
-            self.act_fn = lambda x: F.softmax(x, dim=-1) * x
+            self.act_fn = lambda x: F.softmax(x.to(torch.float32), dim=-1) * x
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
@@ -877,6 +878,8 @@ def create_dataset(cfg, accelerator):
             train_data_loader = DataLoader(
                 dataset, batch_size=cfg["batch_size"], num_workers=3)
             accelerator.print("train_data_loader =", time.time() - start_time)
+            if accelerator.is_main_process:
+                print(next(iter(train_data_loader))['text'][:4, :4])
         elif cfg["dataset_name"] == "wikipedia":
             dataset = load_dataset(
                 cfg["dataset_name"], cfg["dataset_subset_name"], split="train", cache_dir="cache")
@@ -1073,18 +1076,20 @@ def main(mixed_precision="bf16", seed: int = 42):
         # rprint(model)
     else:
         model = Transformer(cfg, tokenizer)
-
+    for name, param in model.named_parameters():
+        if "W_" in name:
+            param.data *= cfg['initializer_scale']
     model.to(accelerator.device)
     if cfg["use_bfloat16"]:
         model.to(torch.bfloat16)
     elif cfg["use_float16"]:
         model.to(torch.float16)
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=cfg["lr"],
-        betas=cfg["betas"],
-        weight_decay=cfg["weight_decay"],
-    )
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(),
+    #     lr=cfg["lr"],
+    #     betas=cfg["betas"],
+    #     weight_decay=cfg["weight_decay"],
+    # )
     if cfg["lr_schedule"] is not None:
 
         def lr_schedule(step):
@@ -1122,8 +1127,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             cfg["tokens_per_step"],
         )
 
-    model, optimizer, data_iter, scheduler = accelerator.prepare(
-        model, optimizer, data_iter, scheduler)
+    model, optimizer, data_iter = accelerator.prepare(model, optimizer, data_iter)
 
     accelerator.print(cfg)
     # DataLoader(full_owt_test['text'], batch_size=cfg['batch_size'], shuffle=False, pin_memory=False)
@@ -1132,7 +1136,8 @@ def main(mixed_precision="bf16", seed: int = 42):
     loss_ewmas = []
     step = 0
     start_time = time.time()
-    loss_ewma = 9
+    # loss_ewma = 9
+    loss_ewma = torch.tensor(9., device=accelerator.device)
     # loss_beta = 0.95
     total_tokens = 0
     # running_loss = 0
@@ -1168,6 +1173,18 @@ def main(mixed_precision="bf16", seed: int = 42):
 
             # loss = loss / accelerator.num_processes
             accelerator.backward(loss)
+            if c<3:
+                print(batch.shape)
+                batch = accelerator.gather(batch)
+                print(batch.shape)
+            # print(batch[..., 1])
+            # break
+
+            # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+            # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
+            running_loss += loss.detach() * accelerator.gradient_accumulation_steps
+            batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)*8
+            # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
 
             running_loss += loss.detach()
             # batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)
@@ -1177,6 +1194,12 @@ def main(mixed_precision="bf16", seed: int = 42):
                 accelerator.clip_grad_norm_(
                     model.parameters(), cfg["grad_norm_clip"])
                 optimizer.step()
+                scheduler.step()
+                # if accelerator.is_main_process:
+                #     print("Step", step, "Scheduler:")
+                #     print(scheduler.state_dict())
+                # if step % 50 == 0:
+                #     print(step, (scheduler.get_last_lr()[0] - 1e-7)/(step+1))
                 if cfg["lr_schedule"] is not None:
                     scheduler.step()
                     if accelerator.is_main_process:
@@ -1209,16 +1232,17 @@ def main(mixed_precision="bf16", seed: int = 42):
                             )
                         wandb.save(f"{model_name}_{step:0>6}.pth")
 
-                dist.all_reduce(running_loss, op=dist.ReduceOp.SUM)
-                running_loss /= accelerator.num_processes
+                # dist.all_reduce(running_loss, op=dist.ReduceOp.SUM)
+                # running_loss /= accelerator.num_processes
+                
                 # print(accelerator.local_process_index, running_loss)
                 # losses.append(running_loss)
 
                 loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
                     1 - cfg["train_loss_ewma_beta"]
                 )
-                loss_ewmas.append(loss_ewma)
-                if accelerator.is_main_process:
+                # loss_ewmas.append(loss_ewma)
+                if accelerator.is_main_process and step % 100 == 0:
                     wandb.log(
                         {
                             "loss": running_loss.item(),

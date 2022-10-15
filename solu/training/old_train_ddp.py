@@ -11,7 +11,7 @@ from easy_transformer.utils import tokenize_and_concatenate
 import argparse
 
 #! SoLU Imports
-from solu.transformer import Transformer
+from solu.old_transformer import Transformer
 from solu.utils import solu_get_prev_versions
 # %%
 # %%

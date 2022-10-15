@@ -60,7 +60,7 @@ from typing import Union, Tuple, List, Dict, Any, Optional
 
 from easy_transformer.EasyTransformerConfig import EasyTransformerConfig
 from easy_transformer import EasyTransformer
-from rich import print# as rprint
+from rich import print as rprint
 
 # %%
 from IPython import get_ipython
@@ -86,8 +86,7 @@ class TrainingConfig:
     batches_per_step: int = 1
     seed: int = 12345
     debug: bool = True
-
-
+    initializer_scale: float = 1.
 
     model_cfg: EasyTransformerConfig = None
     
@@ -105,11 +104,11 @@ class TrainingConfig:
             model_cfg_dict['d_head'] = 64
             assert model_cfg_dict['d_model'] % model_cfg_dict['d_head'] == 0, f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
             model_cfg_dict['n_heads'] = model_cfg_dict['d_model']//model_cfg_dict['d_head']
-        
+        model_cfg_dict['attn_scale_full'] = True
         model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
-        if cfg_dict['debug']:
-            rprint(training_cfg_dict)
-            rprint(model_cfg_dict)
+        # if cfg_dict['debug']:
+        #     rprint(training_cfg_dict)
+        #     rprint(model_cfg_dict)
         return cls(model_cfg = model_cfg, **training_cfg_dict)
 
 cfg = TrainingConfig.from_dict(
@@ -117,8 +116,9 @@ cfg = TrainingConfig.from_dict(
     apply_anthropic_hyper_params = True,
     act_fn='solu_ln',
     tokenizer_name = "EleutherAI/gpt-neox-20b",
-    lr=1e-4,
-    n_ctx=1024
+    lr=1e-3,
+    n_ctx=1024,
+    batch_size=2,
 )
 rprint(cfg)
 
@@ -127,3 +127,64 @@ model = EasyTransformer.from_config(cfg.model_cfg)
 rprint(model)
 
 # %%
+
+# What do?
+"""
+- Load data
+- Make optimizer & scheduler
+- Setup logging
+- Setup training loop
+- Setup saving code + structure - config to JSON, model weights, optimizer state, scheduler state, training state
+- 
+"""
+
+def load_data(cfg):
+    data = datasets.concatenate_datasets([datasets.load_from_disk(f"/workspace/data/pile_0{i}.hf") for i in range(3)])
+    data = data.with_format("torch")
+    data.shuffle(seed=cfg.seed)
+    print(data)
+    data_loader = DataLoader(data, num_workers=8, batch_size=cfg.batch_size)
+    return data_loader
+
+data_loader = load_data(cfg)
+# %%
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("n_layers", type=int)
+    for key, value in DEFAULT_CONFIG.items():
+        if key != "n_layers":
+            parser.add_argument(f"--{key}", type=type(value), default=value)
+
+    if IN_IPYTHON:
+        args = parser.parse_args(["1"])
+    else:
+        args = parser.parse_args()
+
+    cfg = TrainingConfig.from_dict(**vars(args))
+
+    print(
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
+    for key in (cfg.keys()):
+        print(f"{key}: {cfg[key]}")
+    print(
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
+
+
+    model = EasyTransformer.from_config(cfg.model_cfg)
+    for name, param in model.named_parameters():
+        scale = 1600/cfg.d_model
+        if "W_" in name:
+            if name.endswith("W_E") or name.endswith("W_pos"):
+                param.data.normal_(mean=0.0, std=cfg.initializer_scale)
+            elif name.endswith("W_U"):
+                param.data.normal_(mean=0.0, std=(0.02*scale)**2 * cfg.initializer_scale)
+            else:
+                param.data.normal_(mean=0.0, std=(0.02*scale) * cfg.initializer_scale)
+
+    accelerator = Accelerator(
+    mixed_precision='bf16', gradient_accumulation_steps=cfg.batches_per_step)
+    
+    
+
