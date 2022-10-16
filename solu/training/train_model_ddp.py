@@ -68,15 +68,17 @@ DEFAULT_CFG = {
     "debug": False,
     "debug_batch": False,
     "normalization": "LN",  # 'LN' 'RMS' or None
-    "max_tokens": 30*10**9,
+    "max_tokens": 15*10**9,
     "version": -1,
     "use_bfloat16_matmul": True,
     "n_ctx": 1024,
     "d_vocab": 48262,
-    "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
+    # "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
+    "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
     "weight_decay": 0.05,
-    "dataset_name": "c4+code",
+    # "dataset_name": "c4+code",
+    "dataset_name": "the_pile",
     "grad_norm_clip": 1.0,
     "n_devices": torch.cuda.device_count(),
     "act_fn": "solu_ln",
@@ -86,7 +88,7 @@ DEFAULT_CFG = {
     "lr_schedule": "cosine_warmup",
     "warmup_tokens": 3*10**8,
     "train_loss_ewma_beta": 0.99,
-    "truncate_tokens": 25 * 10 ** 8,
+    "truncate_tokens": 10 ** 12,
     "log_interval": 50,
     "initializer_scale_global": 1.,
     "initializer_scale_hidden": 0.02, # This / sqrt(d_model/256), used for attn and neurons
@@ -199,30 +201,34 @@ def to_numpy(tensor, flat=False):
 
 def init_tokenizer(cfg):
     tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_name"])
+    print("Loaded tokenizer:", tokenizer)
     return tokenizer
 
 
-def create_dataset(cfg):
+def create_dataset(cfg, tokenizer):
+    if cfg['dataset_name']=='c4+code':
+        data = datasets.concatenate_datasets(
+            [
+                datasets.load_from_disk("/workspace/data/c4_train_160_tokens.hf"),
+                datasets.load_from_disk("/workspace/data/codeparrot_train_tokens.hf"),
+                #! TODO Fix after!
+                # datasets.load_from_disk("/workspace/data/c4_train_1_tokens.hf"),
+                # datasets.load_from_disk("/workspace/data/codeparrot_valid_tokens.hf"),
+            ])
+        if cfg["debug"]:
+            print(data)
+        data = data.with_format("torch")
+        data = data.shuffle(seed=cfg['seed'])
+        if cfg["use_acc"]:
+            batch_size = cfg["batch_size_per_device"]
+        else:
+            batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
 
-    data = datasets.concatenate_datasets(
-        [
-            datasets.load_from_disk("/workspace/data/c4_train_160_tokens.hf"),
-            datasets.load_from_disk("/workspace/data/codeparrot_train_tokens.hf"),
-            #! TODO Fix after!
-            # datasets.load_from_disk("/workspace/data/c4_train_1_tokens.hf"),
-            # datasets.load_from_disk("/workspace/data/codeparrot_valid_tokens.hf"),
-        ])
-    if cfg["debug"]:
-        print(data)
-    data = data.with_format("torch")
-    data = data.shuffle(seed=cfg['seed'])
-    if cfg["use_acc"]:
-        batch_size = cfg["batch_size_per_device"]
+        data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
+        print("Created C4 + CodeParrot dataset")
+        return data_loader
     else:
-        batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
-
-    data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
-    return data_loader
+        return create_pile_dataset(cfg, tokenizer)
 
 def create_pile_dataset(cfg, tokenizer):
     seq_len = cfg['n_ctx']
@@ -252,15 +258,16 @@ def create_pile_dataset(cfg, tokenizer):
     dataset = load_dataset('json', data_files=pile_urls, streaming=True, split='train')
     dataset = dataset.remove_columns('meta')
 
-    dataset = dataset.map(tokenize, batched=True)
+    dataset = dataset.map(tokenize, batched=True, remove_columns=['text'])
     dataset = dataset.with_format(type='torch')
-    dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=1000)
+    dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=30000)
     if cfg["use_acc"]:
         batch_size = cfg["batch_size_per_device"]
     else:
         batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
 
     train_data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=8)
+    print("Created PILE dataset")
     return train_data_loader
 
 def init_weights(model, cfg):
