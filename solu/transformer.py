@@ -285,7 +285,7 @@ class Attention(nn.Module):
         self.register_buffer("mask", causal_mask)
 
         self.register_buffer("IGNORE", torch.tensor(-1e5))
-        self.attn_scale = (self.cfg["d_head"])
+        self.attn_scale = np.sqrt(self.cfg["d_head"])
 
         self.hook_k = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
@@ -296,12 +296,9 @@ class Attention(nn.Module):
         self.hook_attn = HookPoint()  # [batch, head_index, query_pos, key_pos]
         # [batch, head_index, head_index, d_model]
         self.hook_result = HookPoint()
-        if cfg["shortformer_pos"]:
-            self.hook_attn_input = HookPoint()
 
-    def forward(self, x, pos_embed):
+    def forward(self, resid_pre, attn_input=None):
         if self.cfg["shortformer_pos"]:
-            attn_input = self.hook_attn_input(x + pos_embed)
             q = self.hook_q(
                 amp_einsum(
                     "bpm,imh->bpih",
@@ -323,19 +320,19 @@ class Attention(nn.Module):
         else:
             q = self.hook_q(
                 amp_einsum(
-                    "bpm,imh->bpih", x, self.W_Q, self.cfg["use_bfloat16_matmul"]
+                    "bpm,imh->bpih", resid_pre, self.W_Q, self.cfg["use_bfloat16_matmul"]
                 )
                 + self.b_Q
             )  # [batch, pos, head_index, d_head]
             k = self.hook_k(
                 amp_einsum(
-                    "bpm,imh->bpih", x, self.W_K, self.cfg["use_bfloat16_matmul"]
+                    "bpm,imh->bpih", resid_pre, self.W_K, self.cfg["use_bfloat16_matmul"]
                 )
                 + self.b_K
             )  # [batch, pos, head_index, d_head]
 
         v = self.hook_v(
-            amp_einsum("bpm,imh->bpih", x, self.W_V,
+            amp_einsum("bpm,imh->bpih", resid_pre, self.W_V,
                        self.cfg["use_bfloat16_matmul"])
             + self.b_V
         )  # [batch, pos, head_index, d_head]
@@ -422,31 +419,42 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.ln1 = LayerNorm(self.cfg, self.cfg["d_model"])
-        self.ln2 = LayerNorm(self.cfg, self.cfg["d_model"])
         self.attn = Attention(self.cfg)
-        self.mlp = MLP(self.cfg)
-
         self.hook_attn_out = HookPoint()  # [batch, pos, d_model]
-        self.hook_mlp_out = HookPoint()  # [batch, pos, d_model]
+
+        if cfg['shortformer_pos']:
+            self.hook_attn_input = HookPoint()  # [batch, pos, d_model]
         # Note that resid_pre of layer k+1 is resid_post of layer k - given for convenience
         self.hook_resid_pre = HookPoint()  # [batch, pos, d_model]
-        self.hook_resid_mid = HookPoint()  # [batch, pos, d_model]
         self.hook_resid_post = HookPoint()  # [batch, pos, d_model]
-
+        if not cfg["attn_only"]:
+            self.ln2 = LayerNorm(self.cfg, self.cfg["d_model"])
+            self.mlp = MLP(self.cfg)
+            self.hook_mlp_out = HookPoint()  # [batch, pos, d_model]
+            self.hook_resid_mid = HookPoint()  # [batch, pos, d_model]
     def forward(self, x, pos_embed):
         resid_pre = self.hook_resid_pre(x)  # [batch, pos, d_model]
-        
-        attn_out = self.hook_attn_out(
-            self.attn(self.ln1(resid_pre), pos_embed)
-        )  # [batch, pos, d_model]
-        resid_mid = self.hook_resid_mid(
-            resid_pre + attn_out)  # [batch, pos, d_model]
-        
-        mlp_out = self.hook_mlp_out(
-            self.mlp(self.ln2(resid_mid))
-        )  # [batch, pos, d_model]
-        resid_post = self.hook_resid_post(
-            resid_mid + mlp_out)  # [batch, pos, d_model]
+        if self.cfg['shortformer_pos']:
+            attn_input = self.hook_attn_input(resid_pre+pos_embed)
+            attn_out = self.hook_attn_out(
+                self.attn(self.ln1(resid_pre), self.ln1(attn_input))
+            )  # [batch, pos, d_model]
+        else:
+            attn_out = self.hook_attn_out(
+                self.attn(self.ln1(resid_pre))
+            )  # [batch, pos, d_model]
+        if self.cfg["attn_only"]:
+            resid_post = self.hook_resid_post(
+                resid_pre + attn_out)  # [batch, pos, d_model]
+        else:
+            resid_mid = self.hook_resid_mid(
+                resid_pre + attn_out)  # [batch, pos, d_model]
+            
+            mlp_out = self.hook_mlp_out(
+                self.mlp(self.ln2(resid_mid))
+            )  # [batch, pos, d_model]
+            resid_post = self.hook_resid_post(
+                resid_mid + mlp_out)  # [batch, pos, d_model]
         return resid_post
 
 

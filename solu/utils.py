@@ -134,3 +134,18 @@ def move_folder_to_hub(model_name, repo_name=None, just_final=True, debug=False)
             file.rename(repo_folder/file.name)
     push_to_hub(repo.local_dir)
 # %%
+# Model diagnostics
+
+def print_param_norms(model):
+    for name, param in model.named_parameters():
+        if "IGNORE" not in name and "mask" not in name:
+            print(name, param.norm().item())
+
+def print_act_norms(model, tokens):
+    cache = {}
+    model.cache_all(cache)
+    loss = model(tokens)
+    print("Loss:", loss.item())
+    for key, value in cache.items():
+        print(key, value.norm())
+# %%

@@ -89,9 +89,9 @@ DEFAULT_CFG = {
     "truncate_tokens": 10**12,
     "log_interval": 50,
     "initializer_scale_global": 1.,
-    "initializer_scale_hidden": 0.0125, # This / sqrt(d_model), used for attn and neurons
-    "initializer_scale_embed": 1e-3, # This, constant
-    "initializer_scale_unembed": 0.02, # Set to this / d_model
+    "initializer_scale_hidden": 0.0125, # This / sqrt(d_model/256), used for attn and neurons
+    "initializer_scale_embed": 1e-2, # This, constant
+    "initializer_scale_unembed": 0.05, # Set to this / (d_model/256)
     "use_acc": False,
     "weight_init_scheme": "mup",
     "fixed_init": "", # The name of the saved initialization file
@@ -229,6 +229,7 @@ def init_weights(model, cfg):
         filtered_state_dict = {k:v for k, v in init_state_dict.items() if k in current_state_dict}
         model.load_state_dict(filtered_state_dict, strict=True)
     else:
+        # Using mu-P factorization
         global_scale = cfg["initializer_scale_global"]
         # Set in my hyper-param sweep over a 2L256W model
         base_d_model = 256
@@ -250,6 +251,8 @@ def init_weights(model, cfg):
                     ):
                     scale = cfg["initializer_scale_hidden"] * global_scale / np.sqrt(cfg["d_model"]/base_d_model)
                     torch.nn.init.normal_(param, std=scale)
+                    if name.endswith("W_out"):
+                        param.data = param.data / 2
                 else:
                     ValueError(f"Unknown weight name {name}")
 
@@ -275,6 +278,7 @@ def make_model_name(cfg):
     else:
         raise ValueError(f"Invalid config for model name: {cfg}")
     return f"v{cfg['version']}_{cfg['n_layers']}L{cfg['d_model']}W_{leaf}"
+
 # %%
 def main(ipython_args=None):
 
