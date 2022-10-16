@@ -402,7 +402,7 @@ class MLP(nn.Module):
                        self.cfg["use_bfloat16_matmul"])
             + self.b_in
         )  # [batch, pos, d_mlp]
-        x = self.hook_post(self.act_fn(x))  # [batch, pos, d_mlp]
+        x = self.hook_post(self.act_fn(x/self.cfg["neuron_temp"]))  # [batch, pos, d_mlp]
         if self.cfg["act_fn"].lower() == "solu_ln":
             x = self.hook_post_ln(self.ln(x))
         x = (
