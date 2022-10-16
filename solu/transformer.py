@@ -410,7 +410,7 @@ class MLP(nn.Module):
                        self.cfg["use_bfloat16_matmul"])
             + self.b_out
         )  # [batch, pos, d_model]
-        return x
+        return x * self.cfg["neuron_scale"]
 
 
 # Transformer Block

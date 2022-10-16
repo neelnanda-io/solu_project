@@ -59,7 +59,7 @@ DEFAULT_CFG = {
     "d_mlp": -1, # 4 * d_model
     "d_head": 64, # 64
     "n_heads": -1, # d_model//d_head
-    "lr_hidden": 3e-3,  # Effective this / d_model
+    "lr_hidden": 2e-3,  # Effective this / d_model
     "lr_vector": 1.5e-3, 
     "batch_size_per_device": 32, # This is batch_size_per_device
     "batches_per_step": 1,
@@ -86,12 +86,13 @@ DEFAULT_CFG = {
     "lr_schedule": "cosine_warmup",
     "warmup_tokens": 3*10**8,
     "train_loss_ewma_beta": 0.99,
-    "truncate_tokens": 10**12,
+    "truncate_tokens": 25 * 10 ** 8,
     "log_interval": 50,
     "initializer_scale_global": 1.,
-    "initializer_scale_hidden": 0.0125, # This / sqrt(d_model/256), used for attn and neurons
-    "initializer_scale_embed": 1e-2, # This, constant
-    "initializer_scale_unembed": 0.05, # Set to this / (d_model/256)
+    "initializer_scale_hidden": 0.02, # This / sqrt(d_model/256), used for attn and neurons
+    "initializer_scale_embed": 1e-1, # This, constant
+    "initializer_scale_unembed": 0.02, # Set to this / (d_model/256)
+    "neuron_scale": 1.,
     "use_acc": False,
     "weight_init_scheme": "mup",
     "fixed_init": "", # The name of the saved initialization file
