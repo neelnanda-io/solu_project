@@ -485,7 +485,7 @@ class Transformer(HookedRootModule):
         # Needed for HookPoints to work
         self.setup_hooks()
 
-    def forward(self, tokens, return_loss=True):
+    def forward(self, tokens, return_type="loss"):
         # Input x is either a batch of tokens ([batch, pos]) or a text string
         embed = self.hook_embed(self.embed(tokens))  # [batch, pos, d_model]
         pos_embed = self.hook_pos_embed(
@@ -502,7 +502,7 @@ class Transformer(HookedRootModule):
         residual = self.ln_final(residual)
         logits = self.unembed(residual.to(torch.float32))  # [batch, pos, d_vocab]
 
-        if return_loss:
+        if return_type=="loss":
             return loss_fn(logits, tokens)
         else:
             return logits

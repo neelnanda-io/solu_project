@@ -50,6 +50,8 @@ pio.renderers.default = "vscode"
 import solu.utils as solu_utils
 from solu.transformer import Transformer
 
+from easy_transformer.evals import evaluate
+
 
 INITIALIZATION_DIR = Path("/workspace/solu_project/initialization")
 
@@ -60,7 +62,7 @@ DEFAULT_CFG = {
     "d_head": 64, # 64
     "n_heads": -1, # d_model//d_head
     "lr_hidden": 2e-3,  # Effective this / d_model
-    "lr_vector": 1.5e-3, 
+    "lr_vector": 1e-3, 
     "batch_size_per_device": 32, # This is batch_size_per_device
     "batches_per_step": 1,
     "seed": -1,
@@ -72,8 +74,9 @@ DEFAULT_CFG = {
     "version": -1,
     "use_bfloat16_matmul": True,
     "n_ctx": 1024,
-    "d_vocab": 48262,
+    # "d_vocab": 48262,
     # "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
+    "d_vocab": 50278,
     "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
     "weight_decay": 0.05,
@@ -89,18 +92,20 @@ DEFAULT_CFG = {
     "warmup_tokens": 3*10**8,
     "train_loss_ewma_beta": 0.99,
     "truncate_tokens": 10 ** 12,
+    # "truncate_tokens": 10 ** 6,
     "log_interval": 50,
     "initializer_scale_global": 1.,
     "initializer_scale_hidden": 0.02, # This / sqrt(d_model/256), used for attn and neurons
     "initializer_scale_embed": 1e-1, # This, constant
     "initializer_scale_unembed": 0.02, # Set to this / (d_model/256)
-    "neuron_scale": 0.5,
-    "neuron_temp": 2.,
+    "neuron_scale": 1.,
+    "neuron_temp": 1.,
     "use_acc": False,
     "weight_init_scheme": "mup",
     "fixed_init": "", # The name of the saved initialization file
     "store_init": False, # Whether to store the initialization for use in future runs.
     "control": 1.,
+    "weight_init_scheme": "mup",
 }
 
 def create_cfg(parsed_args):
@@ -122,6 +127,8 @@ def create_cfg(parsed_args):
         cfg["d_mlp"] = 4 * cfg["d_model"]
     cfg["tokens_per_step"] = cfg["batch_size_per_device"] * \
         cfg["n_ctx"] * cfg["batches_per_step"] * cfg["n_devices"]
+    
+    cfg["batch_size"] = cfg["batch_size_per_device"] * cfg["n_devices"]
 
     cfg["max_steps"] = cfg["max_tokens"] // cfg["tokens_per_step"]
     cfg["warmup_steps"] = cfg["warmup_tokens"] // cfg["tokens_per_step"]
@@ -136,7 +143,7 @@ def create_cfg(parsed_args):
         cfg["n_params"] = 3 * cfg["n_layers"] * cfg["d_model"] ** 2
     
     if cfg["seed"]==-1:
-        cfg["seed"] = random.randint(0, 2**32 - 1)
+        cfg["seed"] = random.randint(0, 2**20 - 1)
 
     torch.manual_seed(cfg["seed"])
     np.random.seed(cfg["seed"])
@@ -231,6 +238,7 @@ def create_dataset(cfg, tokenizer):
         return create_pile_dataset(cfg, tokenizer)
 
 def create_pile_dataset(cfg, tokenizer):
+    tokenizer.pad_token = tokenizer.eos_token
     seq_len = cfg['n_ctx']
     def tokenize(examples):
         start_time = time.time()
@@ -260,7 +268,9 @@ def create_pile_dataset(cfg, tokenizer):
 
     dataset = dataset.map(tokenize, batched=True, remove_columns=['text'])
     dataset = dataset.with_format(type='torch')
-    dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=30000)
+    if not cfg['debug']:
+        # Note that this line is super important to avoiding overfitting and to generalise! Without shuffling data points are way too correlated
+        dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=30000)
     if cfg["use_acc"]:
         batch_size = cfg["batch_size_per_device"]
     else:
@@ -271,13 +281,24 @@ def create_pile_dataset(cfg, tokenizer):
     return train_data_loader
 
 def init_weights(model, cfg):
+
     if cfg["fixed_init"]:
         print("Using custom initialization from", cfg["fixed_init"])
         init_state_dict = torch.load(INITIALIZATION_DIR/f"{cfg['fixed_init']}.pth")
         current_state_dict = model.state_dict()
         filtered_state_dict = {k:v for k, v in init_state_dict.items() if k in current_state_dict}
         model.load_state_dict(filtered_state_dict, strict=True)
-    else:
+        return
+    elif cfg['weight_init_scheme'] == 'old':
+        print("Using old init scheme")
+        init_weights_old(model, cfg)
+        return
+    elif cfg['weight_init_scheme'] == 'gpt2':
+        print("Using GPT2 init scheme")
+        init_weights_gpt2(model, cfg)
+        return
+    elif cfg["weight_init_scheme"] == "mup":
+        print("Using mup init scheme")
         # Using mu-P factorization
         global_scale = cfg["initializer_scale_global"]
         # Set in my hyper-param sweep over a 2L256W model
@@ -304,6 +325,32 @@ def init_weights(model, cfg):
                         param.data = param.data / 2
                 else:
                     ValueError(f"Unknown weight name {name}")
+    else:
+        raise ValueError(f"Unknown weight init scheme |{cfg['weight_init_scheme']}|")
+
+def init_weights_old(model, cfg):
+    global_scale = np.sqrt(5)*cfg['initializer_scale_global']
+    for name, param in model.named_parameters():
+        if "W_" in name:
+            nn.init.kaiming_uniform_(param, a=global_scale, mode='fan_out')
+
+def init_weights_gpt2(model, cfg):
+    global_scale = 0.02*cfg['initializer_scale_global']
+    for name, param in model.named_parameters():
+        if name.endswith("W_pos"):
+            scale = global_scale/2
+            print(name, scale)
+            nn.init.normal_(param, std=scale)
+        elif name.endswith("W_out") or name.endswith("W_O"):
+            scale = global_scale/np.sqrt(cfg['n_layers'])
+            print(name, scale)
+            nn.init.normal_(param, std=scale)
+        elif "W_" in name:
+            scale = global_scale
+            print(name, scale)
+            nn.init.normal_(param, std=scale)
+        else:
+            print(name, "no init")
 
 def test(args):
     # from neel.imports import *; from solu.training.train_model_ddp import *
@@ -311,7 +358,7 @@ def test(args):
     tokenizer = init_tokenizer()
 
     model = Transformer(cfg)
-    data_loader = create_dataset(cfg)
+    data_loader = create_dataset(cfg,tokenizer)
     data = next(iter(data_loader))['text'][:4]
     init_weights(model, cfg)
     loss = model(data)
@@ -360,6 +407,7 @@ def test_wikipedia(model, tokenizer):
     tokens = tokenizer.encode(big_string, return_tensors='pt')[:, :1024].cuda()
     return model(tokens)
 
+
 # %%
 def main(ipython_args=None):
     if MODE != "wandb":
@@ -403,18 +451,12 @@ def main(ipython_args=None):
         entity="mechanistic-interpretability", 
         config=cfg, name=model_name)
 
-    data_loader = create_dataset(cfg)
-
     tokenizer = init_tokenizer(cfg)
+    data_loader = create_dataset(cfg, tokenizer)
+
 
     model = Transformer(cfg)
-
-    if cfg["weight_init_scheme"]=="mup":
-        print("Mup init scheme")
-        init_weights(model, cfg)
-    else:
-        raise ValueError(f"Bad init scheme: {cfg['weight_init_scheme']}")
-        
+    init_weights(model, cfg)    
     
     if accelerator.is_main_process and not cfg["debug"] and MODE!="wandb":
         torch.save(model.state_dict(), save_dir/"model_init.pth")
@@ -478,7 +520,17 @@ def main(ipython_args=None):
     loss_ewma = torch.tensor(9., device=accelerator.device)
     total_tokens = 0
     running_loss = torch.tensor(0., device=accelerator.device)
-    for c, batch in tqdm.tqdm(enumerate(data_loader)):
+    # n = len(data_loader)
+    data_iter = iter(data_loader)
+    print(next(data_iter))
+    for c in tqdm.tqdm(range(cfg['max_steps'])):
+        while True:
+            try:
+                batch = next(data_iter)
+                break
+            except Exception as e:
+                print("There was an error in data iter:", e)
+                continue
         with accelerator.accumulate(model):
             batch = batch["tokens"]
             
@@ -561,17 +613,33 @@ def main(ipython_args=None):
 
     accelerator.print(f"Finished training! Train Loss EWMA: {loss_ewma}")
 
-    wiki_loss = test_wikipedia(model, tokenizer).item()
-    ind_loss = test_induction(model, tokenizer).item()
+    eval_losses = evaluate(parallel_model, 200, cfg['batch_size'], tokenizer)
+    accelerator.print(f"Eval Loss: {eval_losses}")
 
-    wandb.log({"wiki_loss": wiki_loss, "ind_loss": ind_loss}, step=step)
+    wandb.log(eval_losses, step=step)
 
     if not cfg["debug"] and accelerator.is_main_process and MODE != "wandb":
         torch.save(model.state_dict(), save_dir/f"model_final.pth")
-        solu_utils.move_folder_to_hub(model_name, just_final=True)
+        if total_tokens > 5e9:
+            solu_utils.move_folder_to_hub(model_name, just_final=True)
         wandb.finish()
     
 # %%
+
+""" 
+Test string:
+
+cfg = create_cfg(dict(n_layers=4, batch_size_per_device=32))
+model = Transformer(cfg)
+tokenizer = init_tokenizer(cfg)
+model.tokenizer = tokenizer
+import easy_transformer.evals as evals
+model.load_state_dict(torch.load("/workspace/solu_project/saved_models/v145_4L512W_solu_repo/model_final.pth"))
+model.cuda()
+parallel_model = torch.nn.DataParallel(model)
+evaluate(parallel_model, truncate=100, batch_size=cfg['batch_size'], tokenizer=tokenizer)
+"""
+
 # if __name__=="__main__":
 #     main()
 
