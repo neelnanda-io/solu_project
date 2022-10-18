@@ -70,18 +70,18 @@ DEFAULT_CFG = {
     "debug": False,
     "debug_batch": False,
     "normalization": "LN",  # 'LN' 'RMS' or None
-    "max_tokens": 15*10**9,
+    "max_tokens": 22*10**9,
     "version": -1,
     "use_bfloat16_matmul": True,
     "n_ctx": 1024,
-    # "d_vocab": 48262,
-    # "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
-    "d_vocab": 50278,
-    "tokenizer_name": "EleutherAI/gpt-neox-20b",
+    "d_vocab": 48262,
+    "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
+    # "d_vocab": 50278,
+    # "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
     "weight_decay": 0.05,
-    # "dataset_name": "c4+code",
-    "dataset_name": "the_pile",
+    "dataset_name": "c4+code",
+    # "dataset_name": "the_pile",
     "grad_norm_clip": 1.0,
     "n_devices": torch.cuda.device_count(),
     "act_fn": "solu_ln",
@@ -101,11 +101,10 @@ DEFAULT_CFG = {
     "neuron_scale": 1.,
     "neuron_temp": 1.,
     "use_acc": False,
-    "weight_init_scheme": "mup",
+    "weight_init_scheme": "gpt2",
     "fixed_init": "", # The name of the saved initialization file
-    "store_init": False, # Whether to store the initialization for use in future runs.
+    "store_init": True, # Whether to store the initialization for use in future runs.
     "control": 1.,
-    "weight_init_scheme": "mup",
 }
 
 def create_cfg(parsed_args):
@@ -270,6 +269,7 @@ def create_pile_dataset(cfg, tokenizer):
     dataset = dataset.with_format(type='torch')
     if not cfg['debug']:
         # Note that this line is super important to avoiding overfitting and to generalise! Without shuffling data points are way too correlated
+        print("Shuffling dataset")
         dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=30000)
     if cfg["use_acc"]:
         batch_size = cfg["batch_size_per_device"]
@@ -522,7 +522,9 @@ def main(ipython_args=None):
     running_loss = torch.tensor(0., device=accelerator.device)
     # n = len(data_loader)
     data_iter = iter(data_loader)
-    print(next(data_iter))
+    data = (next(data_iter))
+    print(data['tokens'][:3, :100])
+    print(tokenizer.batch_decode(data['tokens'][:3, :100]))
     for c in tqdm.tqdm(range(cfg['max_steps'])):
         while True:
             try:
