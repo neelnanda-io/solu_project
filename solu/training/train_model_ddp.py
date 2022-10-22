@@ -50,7 +50,8 @@ pio.renderers.default = "vscode"
 import solu.utils as solu_utils
 from solu.transformer import Transformer
 
-from easy_transformer.evals import evaluate
+from easy_transformer.evals import evaluate, induction_loss
+from easy_transformer.utils import lm_cross_entropy_loss
 
 
 INITIALIZATION_DIR = Path("/workspace/solu_project/initialization")
@@ -80,7 +81,7 @@ DEFAULT_CFG = {
     # "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
     "weight_decay": 0.05,
-    "dataset_name": "c4+code",
+    "dataset_name": "c4_code",
     # "dataset_name": "the_pile",
     "grad_norm_clip": 1.0,
     "n_devices": torch.cuda.device_count(),
@@ -103,7 +104,7 @@ DEFAULT_CFG = {
     "use_acc": False,
     "weight_init_scheme": "gpt2",
     "fixed_init": "", # The name of the saved initialization file
-    "store_init": True, # Whether to store the initialization for use in future runs.
+    "store_init": False, # Whether to store the initialization for use in future runs.
     "control": 1.,
 }
 
@@ -212,7 +213,7 @@ def init_tokenizer(cfg):
 
 
 def create_dataset(cfg, tokenizer):
-    if cfg['dataset_name']=='c4+code':
+    if cfg['dataset_name']=='c4_code':
         data = datasets.concatenate_datasets(
             [
                 datasets.load_from_disk("/workspace/data/c4_train_160_tokens.hf"),
@@ -223,14 +224,18 @@ def create_dataset(cfg, tokenizer):
             ])
         if cfg["debug"]:
             print(data)
+        print("Loaded dataset")
         data = data.with_format("torch")
+        print("Convert to torch")
         data = data.shuffle(seed=cfg['seed'])
+        print("Shuffled")
         if cfg["use_acc"]:
             batch_size = cfg["batch_size_per_device"]
         else:
             batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
 
         data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
+        print("Made data loader")
         print("Created C4 + CodeParrot dataset")
         return data_loader
     else:
@@ -373,47 +378,35 @@ def make_model_name(cfg):
         leaf = 'gelu'
     else:
         raise ValueError(f"Invalid config for model name: {cfg}")
-    return f"v{cfg['version']}_{cfg['n_layers']}L{cfg['d_model']}W_{leaf}"
+    return f"v{cfg['version']}_{cfg['n_layers']}L{cfg['d_model']}W_{leaf}_{cfg['dataset_name']}"
 
-def test_induction(model, tokenizer):
-    rep_tokens = torch.randint(100, 20000, (4, 512)).cuda()
-    rep_tokens = einops.repeat(rep_tokens, "b p -> b (2 p)")
-    rep_tokens[:, 0] = tokenizer.bos_token_id
+# @torch.inference_mode()
+# def induction_loss(model, tokenizer, batch_size=16, seq_len=384):
+#     rep_tokens = torch.randint(100, 40000, (batch_size, seq_len)).cuda()
+#     rep_tokens = einops.repeat(rep_tokens, "b p -> b (2 p)")
+#     rep_tokens[:, 0] = tokenizer.bos_token_id
 
-    logits = model(rep_tokens, return_loss=False)
+#     logits = model(rep_tokens, return_type="logits")
 
-    from easy_transformer.utils import lm_cross_entropy_loss
+#     lps = lm_cross_entropy_loss(logits, rep_tokens, return_per_token=True)
 
-    lps = lm_cross_entropy_loss(logits, rep_tokens, return_per_token=True)
-
-    # line(lps)
-    return (lps[:, 512:].mean())
-
-def test_wikipedia(model, tokenizer):
-    big_string = """
-    The Borodino-class battlecruisers (Russian: Линейные крейсера типа «Измаил») were a group of four battlecruisers ordered by the Imperial Russian Navy before World War I. Also referred to as the Izmail class, they were laid down in late 1912[Note 1] at Saint Petersburg for service with the Baltic Fleet. Construction of the ships was delayed by a lack of capacity among domestic factories and the need to order some components from abroad. The start of World War I slowed their construction still further, as the imported components were often not delivered and domestic production was diverted into areas more immediately useful for the war effort.
-
-    Three of the four ships were launched in 1915 and the fourth in 1916. Work on the gun turrets lagged, and it became evident that Russian industry would not be able to complete the ships during the war. The Russian Revolution of 1917 halted all work on the ships, which was never resumed. Although some consideration was given to finishing the hulls that were nearest to completion, the three furthest from completion were sold for scrap by the Soviet Union during the early 1920s. The Soviet Navy proposed to convert Izmail, the ship closest to completion, to an aircraft carrier in 1925, but the plan was cancelled after political manoeuvring by the Red Army cut funding and she was eventually scrapped in 1931.
-
-    Design and development
-    After the end of the Russo-Japanese War of 1905, the Russian Naval General Staff decided that it needed a squadron of fast armoured cruisers[Note 2][1] that could use their speed to engage the leader of an enemy's battle line, as Admiral Tōgō had done against the Russian fleet during the Battle of Tsushima. The Naval General Staff initially called for a ship with high speed (28 knots (52 km/h; 32 mph)), 305-millimetre (12 in) guns, and limited protection (a waterline belt of 190 mm or 7.5 in). The Tsar, head of the Russian government, approved construction of four such ships on 5 May 1911, but the State Duma session ended before the proposal could be voted on. Preliminary bids for the ships were solicited from private builders, but the bids proved to be very high,[1] leading to a reconsideration of the requirements. The Naval General Staff issued a new specification on 1 July 1911 for a ship with a speed of only 26.5 knots (49.1 km/h; 30.5 mph) and with armour increased to 254 mm (10 in). The armament was increased to nine 356-millimetre (14 in) guns in three non-superfiring triple-gun turrets,[2] based on a false rumour that the Germans were increasing the calibre of the guns in their battleships.[3] The Imperial Russian Navy believed that widely separating the main gun turrets and their magazines reduced the chance of a catastrophic ammunition explosion, reduced the silhouette of the ship and improved stability without superfiring turrets and their tall barbettes.[4]
-
-    The Naval Ministry solicited new bids on 8 September from 23 shipbuilders, domestic and foreign, but only 7 responded, even after the deadline was extended by a month. Several designs were rejected for not meeting the revised criteria. In the meantime, the Artillery Section of the Main Administration of Shipbuilding had decided that it preferred a four-turret design, and new bids were solicited in May 1912 from the leading contenders from the first round of bidding.[5] The eventual winner was a design by the Admiralty Shipyard in Saint Petersburg which had the extra turret added to a new hull section inserted into the original three-turret design.[6]
-
-    The Duma approved construction in May 1912, before the design was finalised, and allocated 45.5 million rubles for each ship. The additional gun turret and consequent increase in the size of the ships led to the ships being overbudget by about 7 million rubles each, and some money was diverted from the budget for the Svetlana-class cruiser to cover the discrepancy. Orders were placed on 18 September 1912 for a pair of ships each from the Admiralty Shipyard and the Baltic Works, also of Saint Petersburg. The first pair was to be ready for trials on 14 July 1916, and the second pair on 14 September 1916.[5][7]
-
-    Full-scale armour trials in 1913 revealed serious weaknesses in the Borodinos' proposed protection scheme. The obsolete ironclad Chesma had been modified with armour protection identical to that used by the Gangut-class battleships, then under construction. The deck and turret-roof armour proved to be too thin, and the structure supporting the side armour was not strong enough to withstand the shock of impact from heavy shells.[8] The design of the Borodinos' armour was similar in construction to that of the Ganguts and therefore needed to be modified, which slowed construction. The Borodinos' deck armour was reinforced with extra plates and the thickness of the turret roofs was increased. To compensate for this additional weight, a planned rear conning tower was removed entirely and the thickness of the main belt was slightly reduced. Mortise and tenon joints were introduced between the armour plates along their vertical edges to better distribute the shock of a shell impact and to lessen the stress on the supporting hull structure. The launching of the first pair of ships was postponed by six months because of these changes, plus delays imposed by the many ship orders already in hand.[Note 3][8]"""
-
-    tokens = tokenizer.encode(big_string, return_tensors='pt')[:, :1024].cuda()
-    return model(tokens)
-
+#     # line(lps)
+#     return (lps[:, seq_len+1:].mean())
 
 # %%
 def main(ipython_args=None):
     if MODE != "wandb":
         parser = argparse.ArgumentParser()
         for key, value in DEFAULT_CFG.items():
-            parser.add_argument(f"--{key}", type=type(value), default=value)
+            if type(value)==bool:
+                # argparse for Booleans is broken rip. Now you put in a flag to change the default --{flag} to set True, --{flag} to set False
+                if value:
+                    parser.add_argument(f"--{key}", action="store_false")
+                else:
+                    parser.add_argument(f"--{key}", action="store_true")
+
+            else:
+                parser.add_argument(f"--{key}", type=type(value), default=value)
 
         args = parser.parse_args()
         cfg = create_cfg(vars(args))
@@ -594,6 +587,7 @@ def main(ipython_args=None):
                             "total_tokens": total_tokens,
                             "c": c,
                             "scheduled_lr": scheduler.get_last_lr()[0],
+                            "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
                         }
                     accelerator.print(json.dumps(log_dict, indent=2))
                     wandb.log(
@@ -622,8 +616,8 @@ def main(ipython_args=None):
 
     if not cfg["debug"] and accelerator.is_main_process and MODE != "wandb":
         torch.save(model.state_dict(), save_dir/f"model_final.pth")
-        if total_tokens > 5e9:
-            solu_utils.move_folder_to_hub(model_name, just_final=True)
+        # if total_tokens > 5e9:
+        #     solu_utils.move_folder_to_hub(model_name, just_final=True)
         wandb.finish()
     
 # %%

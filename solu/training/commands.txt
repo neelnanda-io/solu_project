@@ -1,0 +1,4 @@
+python train_model_ddp.py --n_layers 1 --d_model 512 --act_fn gelu --seed 387976 --fixed_init 1L512W_init
+python train_model_ddp.py --n_layers 2 --d_model 512 --act_fn gelu --seed 259123 --fixed_init 2L512W_init
+python train_model_ddp.py --n_layers 3 --d_model 512 --act_fn gelu --seed 989422 --fixed_init 3L512W_init
+python train_model_ddp.py --n_layers 4 --d_model 512 --act_fn gelu --seed 9153 --fixed_init 4L512W_init

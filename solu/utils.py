@@ -8,6 +8,7 @@ import json
 import numpy as np
 import plotly.express as px
 import logging
+import shutil
 
 CACHE_DIR = Path("/workspace/cache")
 REPO_ROOT = Path("/workspace/hf_repos/")
