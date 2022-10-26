@@ -75,12 +75,12 @@ print('dataset.map', time.time()-start_time)
 dataset = dataset.with_format(type='torch')
 print("Set torch!")
 if not args.pile:
-    file_path = f"/workspace/data/c4_{args.Index:0>5}.hf"
+    file_path = Path.home()/f"data/c4_{args.Index:0>5}.hf"
 else:
-    file_path = f"/workspace/data/pile_{args.Index:0>2}.hf"
+    file_path = Path.home()/f"data/pile_{args.Index:0>2}.hf"
 print("Saving to file", file_path)
 dataset.save_to_disk(file_path)
 print("Number of removed cache files:", dataset.cleanup_cache_files())
 # %%
 print("Time taken:", time.time()-start_time)
-os.system("rm /workspace/cache/* -r")
+# os.system("rm ~/cache/* -r")

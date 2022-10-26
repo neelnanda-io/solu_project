@@ -38,9 +38,9 @@ def main():
 # %%
 #! Config
 
-CHECKPOINT_DIR = Path("/workspace/solu_project/solu_checkpoints/")
+CHECKPOINT_DIR = Path.home()/("solu_project/solu_checkpoints/")
 NUM_TRAIN_DATA_FILES = 1
-TRAIN_DATA_FILES = [f'/workspace/data/pile_{i:0<2}.hf' for i in range(NUM_TRAIN_DATA_FILES)]
+TRAIN_DATA_FILES = [Path.home()/f'data/pile_{i:0<2}.hf' for i in range(NUM_TRAIN_DATA_FILES)]
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--n_layers", type=int)
 

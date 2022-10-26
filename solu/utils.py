@@ -10,10 +10,10 @@ import plotly.express as px
 import logging
 import shutil
 
-CACHE_DIR = Path("/workspace/cache")
-REPO_ROOT = Path("/workspace/hf_repos/")
-OLD_CHECKPOINT_DIR = Path("/workspace/solu_project/solu_checkpoints/")
-CHECKPOINT_DIR = Path("/workspace/solu_project/saved_models/")
+CACHE_DIR = Path.home()/("cache")
+REPO_ROOT = Path.home()/("hf_repos/")
+OLD_CHECKPOINT_DIR = Path.home()/("solu_project/solu_checkpoints/")
+CHECKPOINT_DIR = Path.home()/("solu_project/saved_models/")
 
 def solu_get_steps(folder_name):
     """Get the list of steps at which checkpoints were taken."""

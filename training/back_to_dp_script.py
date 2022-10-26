@@ -791,7 +791,7 @@ def init_tokenizer():
 def create_dataset(cfg):
 
     data = datasets.concatenate_datasets(
-        [datasets.load_from_disk(f"/workspace/data/pile_0{i}.hf") for i in range(3)])
+        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)])
     data = data.with_format("torch")
     data.shuffle(seed=cfg['seed'])
     print(data)

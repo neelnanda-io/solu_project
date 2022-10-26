@@ -51,7 +51,7 @@ from easy_transformer import EasyTransformer, HookedRootModule, HookPoint
 from rich import print
 
 
-ROOT = Path('/workspace/solu_project/')
+ROOT = Path.home()/('solu_project/')
 DTYPE = torch.bfloat16
 test_var = 1
 # %%
@@ -691,8 +691,8 @@ optimizer = torch.optim.AdamW(model.parameters(),
                               lr=cfg['lr'], 
                               betas=cfg['betas'], 
                               weight_decay=cfg['weight_decay'])
-# model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
-model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/'+cfg['model_checkpoint_name']))
+# model.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
+model.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/'+cfg['model_checkpoint_name']))
 model = (model.to(DTYPE))
 print(model)
 # %%
@@ -843,4 +843,4 @@ def print_neuron_logits(neuron_index, top_k=5):
         l.append(f"|{tokenizer.decode([logit_indices[top_k-i-1].item()], clean_up_tokenization_spaces=False)}| {logit_vec[top_k-i-1].item():.6f}")
     print("\n".join(l))
 
-stores_dict = load_stores_dict("/workspace/solu_project/max_act_solu_v2_1662711752.9306793/4328980.pt", cfg['d_mlp'], dtype=torch.float32)
+stores_dict = load_stores_dict(Path.home()/"solu_project/max_act_solu_v2_1662711752.9306793/4328980.pt", cfg['d_mlp'], dtype=torch.float32)

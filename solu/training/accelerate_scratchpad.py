@@ -139,7 +139,7 @@ rprint(model)
 """
 
 def load_data(cfg):
-    data = datasets.concatenate_datasets([datasets.load_from_disk(f"/workspace/data/pile_0{i}.hf") for i in range(3)])
+    data = datasets.concatenate_datasets([datasets.load_from_disk(Path.home()/f"data/pile_0{i}.hf") for i in range(3)])
     data = data.with_format("torch")
     data.shuffle(seed=cfg.seed)
     print(data)

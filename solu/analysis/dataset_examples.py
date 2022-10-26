@@ -655,7 +655,7 @@ if cfg['attn_only']:
     model = AttnOnlyTransformer(cfg, tokenizer)
 else:
     model = Transformer(cfg, tokenizer)
-model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v9_final.pth'))
+model.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v9_final.pth'))
 model.to('cuda')
 
 # %%

@@ -1,7 +1,7 @@
 # %%
 from solu_utils import *
 line(np.arange(5))
-CHECKPOINT_ROOT = Path('/workspace/solu_project/solu_checkpoints/v9_1L1024W/')
+CHECKPOINT_ROOT = Path.home()/('solu_project/solu_checkpoints/v9_1L1024W/')
 checkpoint_names = os.listdir(CHECKPOINT_ROOT)[:-3]
 # print(checkpoint_names)
 model = Transformer(cfg, tokenizer)
@@ -60,7 +60,7 @@ def name_to_step(checkpoint_name):
 # norms_ln = np.array(norms_ln)
 
 # %%
-model.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v9_final.pth'))
+model.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v9_final.pth'))
 W_U = model.unembed.W_U
 W_out = model.blocks[0].mlp.W_out
 # [d_vocab, d_mlp]
@@ -104,7 +104,7 @@ def vis_activations(str_tokens, activations, name="", incl_bos=True, plot=True):
 
 # %%
 print("Loading the stores")
-stores_dict = load_stores_dict("/workspace/solu_project/max_act_solu_v2_1662711752.9306793/4328980.pt", cfg['d_mlp'], dtype=torch.float32)
+stores_dict = load_stores_dict(Path.home()/"solu_project/max_act_solu_v2_1662711752.9306793/4328980.pt", cfg['d_mlp'], dtype=torch.float32)
 # %%
 model.reset_hooks()
 cache = {}
@@ -119,7 +119,7 @@ def logit_str_to_html(logit_str):
     return pysvelte.Html(html="".join([f"<p>{i}</p>" for i in l]))
 for neuron_index in tqdm.tqdm(range(1)):
 # for neuron_index in tqdm.tqdm(range(cfg['d_mlp'])):
-    f = open(f'/workspace/solu_project/html_pages/{neuron_index}.html', 'w')
+    f = open(Path.home()/f'solu_project/html_pages/{neuron_index}.html', 'w')
     logit_str = print_neuron_logits(neuron_index)
     htmls = [logit_str]
     for example_index in range(10):

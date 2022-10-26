@@ -2,3 +2,5 @@ python train_model_ddp.py --n_layers 1 --d_model 512 --act_fn gelu --seed 387976
 python train_model_ddp.py --n_layers 2 --d_model 512 --act_fn gelu --seed 259123 --fixed_init 2L512W_init
 python train_model_ddp.py --n_layers 3 --d_model 512 --act_fn gelu --seed 989422 --fixed_init 3L512W_init
 python train_model_ddp.py --n_layers 4 --d_model 512 --act_fn gelu --seed 9153 --fixed_init 4L512W_init
+
+python ~/solu_project/solu/training/train_model_ddp.py --n_layers 12 --seed 121212 --batches_per_step 4

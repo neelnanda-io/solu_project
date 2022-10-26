@@ -5,8 +5,8 @@ from solu.utils import *
 from huggingface_hub import create_repo, Repository
 from tqdm.auto import tqdm
 
-old_checkpoint_dir = Path("/workspace/solu_project/solu_checkpoints/")
-new_checkpoint_dir = Path("/workspace/solu_project/saved_models/")
+old_checkpoint_dir = Path.home()/("solu_project/solu_checkpoints/")
+new_checkpoint_dir = Path.home()/("solu_project/saved_models/")
 
 
 # OK let's structure the code:

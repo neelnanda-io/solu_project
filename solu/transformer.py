@@ -366,8 +366,9 @@ class Attention(nn.Module):
         return torch.where(
             self.mask[: attn_scores.size(-2), : attn_scores.size(-1)],
             attn_scores,
-            self.IGNORE,
+            self.IGNORE.to(attn_scores.dtype),
         )
+
 
 
 class MLP(nn.Module):
