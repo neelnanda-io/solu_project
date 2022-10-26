@@ -17,4 +17,6 @@ test/
 solu.egg-info/
 notebooks/
 solu/training/models--NeelNanda--SoLU/
-solu.egg-info/
+solu.egg-info/*
+solu.egg-info/PKG-INFO
+solu.egg-info/SOURCES.txt
