@@ -15,7 +15,7 @@ trunc_dataset.push_to_hub("pile-10k", branch="thousand")
 # %%
 from huggingface_hub import Repository
 from pathlib import Path
-repo_root = Path("/workspace/hf_repos")
+repo_root = Path.home()/("hf_repos")
 repo = Repository(local_dir=repo_root/"pile_test", clone_from="datasets/NeelNanda/pile-10k")
 print(repo)
 
@@ -25,7 +25,7 @@ print(repo)
 
 from huggingface_hub import Repository
 from pathlib import Path
-repo_root = Path("/workspace/hf_repos")
+repo_root = Path.home()/("hf_repos")
 repo = Repository(local_dir=repo_root/"solu_test")
 print(repo)
 # %%

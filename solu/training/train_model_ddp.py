@@ -1,10 +1,10 @@
 # %%
 
 from pprint import pprint
-from accelerate import notebook_launcher
-from accelerate.utils import set_seed, write_basic_config
-from accelerate import Accelerator
-import accelerate
+# from accelerate import notebook_launcher
+# from accelerate.utils import set_seed, write_basic_config
+# from accelerate import Accelerator
+# import accelerate
 import wandb
 import datasets
 from transformers import AutoTokenizer
@@ -54,7 +54,7 @@ from easy_transformer.evals import evaluate, induction_loss
 from easy_transformer.utils import lm_cross_entropy_loss
 
 
-INITIALIZATION_DIR = Path("/workspace/solu_project/initialization")
+INITIALIZATION_DIR = Path.home()/("solu_project/initialization")
 
 DEFAULT_CFG = {
     "n_layers": -1,
@@ -64,14 +64,14 @@ DEFAULT_CFG = {
     "n_heads": -1, # d_model//d_head
     "lr_hidden": 2e-3,  # Effective this / d_model
     "lr_vector": 1e-3, 
-    "batch_size_per_device": 32, # This is batch_size_per_device
-    "batches_per_step": 1,
+    "batch_size_per_device": -1, # This is batch_size_per_device
+    "batches_per_step": -1,
     "seed": -1,
     "save_checkpoints": True,
     "debug": False,
     "debug_batch": False,
     "normalization": "LN",  # 'LN' 'RMS' or None
-    "max_tokens": 22*10**9,
+    "max_tokens": 30*10**9,
     "version": -1,
     "use_bfloat16_matmul": True,
     "n_ctx": 1024,
@@ -118,6 +118,18 @@ def create_cfg(parsed_args):
 
     cfg["version"] = max(solu_utils.solu_get_prev_versions()) + 1
 
+    if cfg["batches_per_step"]==-1:
+        if cfg["n_layers"]>=12:
+            cfg["batches_per_step"] = 4
+        elif cfg["n_layers"]>=9:
+            cfg["batches_per_step"] = 2
+        else:
+            cfg["batches_per_step"] = 1
+
+    max_batch_sizes = json.load(open(Path.home()/"solu_project/max_batch_sizes.json"))
+    if cfg["batch_size_per_device"]==-1:
+        cfg["batch_size_per_device"] = max_batch_sizes[str(cfg["n_layers"])]
+
     if cfg["d_model"]==-1:
         cfg["d_model"] = 128 * cfg["n_layers"]
 
@@ -148,7 +160,6 @@ def create_cfg(parsed_args):
     torch.manual_seed(cfg["seed"])
     np.random.seed(cfg["seed"])
     random.seed(cfg["seed"])
-    set_seed(cfg["seed"])
     return cfg
 
 def get_max_batch_size(cfg):
@@ -157,9 +168,9 @@ def get_max_batch_size(cfg):
     model = model.cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     parallel_model = torch.nn.DataParallel(model)
-    batch_scan = list(range(8, 16)) + list(range(16, 32, 2)) + list(range(32, 64, 4)) + list(range(64, 128, 8))
+    batch_scan = list(range(1, 16)) + list(range(16, 32, 2)) + list(range(32, 64, 4)) + list(range(64, 128, 8))
     best_batch_size = 0
-    for batch_size in tqdm.tqdm(batch_scan):
+    for batch_size in tqdm.tqdm(enumerate(batch_scan)):
         try:
             for i in range(2):
                 rand_tokens = torch.randint(100, 10000, (batch_size*torch.cuda.device_count(), cfg["n_ctx"])).cuda()
@@ -213,15 +224,18 @@ def init_tokenizer(cfg):
 
 
 def create_dataset(cfg, tokenizer):
+    # return create_pile_dataset(cfg, tokenizer)
     if cfg['dataset_name']=='c4_code':
         data = datasets.concatenate_datasets(
             [
-                datasets.load_from_disk("/workspace/data/c4_train_160_tokens.hf"),
-                datasets.load_from_disk("/workspace/data/codeparrot_train_tokens.hf"),
+                datasets.load_from_disk(Path.home()/"data/c4_train_tokens_v2.hf"),
+                datasets.load_from_disk(Path.home()/"data/codeparrot_train_tokens_v2.hf"),
                 #! TODO Fix after!
-                # datasets.load_from_disk("/workspace/data/c4_train_1_tokens.hf"),
-                # datasets.load_from_disk("/workspace/data/codeparrot_valid_tokens.hf"),
+                # datasets.load_from_disk(Path.home()/"data/c4_train_1_tokens.hf"),
+                # datasets.load_from_disk(Path.home()/"data/codeparrot_valid_tokens.hf"),
             ])
+        print("Using version 2 of the data, containing <EOS> delimiters AND <BOS>!")
+        print(data)
         if cfg["debug"]:
             print(data)
         print("Loaded dataset")
@@ -344,18 +358,18 @@ def init_weights_gpt2(model, cfg):
     for name, param in model.named_parameters():
         if name.endswith("W_pos"):
             scale = global_scale/2
-            print(name, scale)
+            # print(name, scale)
             nn.init.normal_(param, std=scale)
         elif name.endswith("W_out") or name.endswith("W_O"):
             scale = global_scale/np.sqrt(cfg['n_layers'])
-            print(name, scale)
+            # print(name, scale)
             nn.init.normal_(param, std=scale)
         elif "W_" in name:
             scale = global_scale
-            print(name, scale)
+            # print(name, scale)
             nn.init.normal_(param, std=scale)
-        else:
-            print(name, "no init")
+        # else:
+            # print(name, "no init")
 
 def test(args):
     # from neel.imports import *; from solu.training.train_model_ddp import *
@@ -394,6 +408,19 @@ def make_model_name(cfg):
 #     return (lps[:, seq_len+1:].mean())
 
 # %%
+class Accelerator:
+    def __init__(self, *args, **kwargs):
+        is_main_process=True
+        device = "cuda"
+        
+        pass 
+
+    def print(self, *args):
+        print(*args)
+    
+    def prepare(self, *args):
+        return args
+
 def main(ipython_args=None):
     if MODE != "wandb":
         parser = argparse.ArgumentParser()
@@ -410,7 +437,6 @@ def main(ipython_args=None):
 
         args = parser.parse_args()
         cfg = create_cfg(vars(args))
-        accelerator = Accelerator(gradient_accumulation_steps=cfg["batches_per_step"])
     else:
         run = wandb.init(project="solu",
         entity="mechanistic-interpretability", 
@@ -421,21 +447,12 @@ def main(ipython_args=None):
         print("Setting run config to wandb")
         print(run.config["n_layers"])
         cfg = create_cfg(cfg)
-        accelerator = Accelerator(gradient_accumulation_steps=cfg["batches_per_step"])
-
-    set_seed(cfg["seed"])
-    if accelerator.num_processes > 1:
-        accelerator.print("Using accelerate!")
-        cfg["use_acc"] = True 
     
-    
-    print("Is main process", accelerator.is_main_process)
-    accelerator.print("initialized accelerator")
-    accelerator.print(json.dumps(cfg, indent=2))
+    print(json.dumps(cfg, indent=2))
 
-    if accelerator.is_main_process and MODE!="wandb":
+    if MODE!="wandb":
         model_name = make_model_name(cfg)
-        save_dir = Path(f"/workspace/solu_project/saved_models/{model_name}")
+        save_dir = (Path.home()/f"solu_project/saved_models/{model_name}")
         checkpoint_dir = save_dir/"checkpoints"
         save_dir.mkdir(exist_ok=True, parents=False)
         checkpoint_dir.mkdir(exist_ok=True, parents=False)
@@ -451,14 +468,14 @@ def main(ipython_args=None):
     model = Transformer(cfg)
     init_weights(model, cfg)    
     
-    if accelerator.is_main_process and not cfg["debug"] and MODE!="wandb":
+    if not cfg["debug"] and MODE!="wandb":
         torch.save(model.state_dict(), save_dir/"model_init.pth")
         if cfg["store_init"]:
             torch.save(model.state_dict(), INITIALIZATION_DIR/f"{model_name}.pth")
         with open(save_dir/"config.json", "w") as f:
             json.dump(cfg, f, indent=2)
 
-    model.to(accelerator.device)
+    model.to("cuda")
     
     if cfg["lr_schedule"] is not None:
 
@@ -491,130 +508,127 @@ def main(ipython_args=None):
             {"params": param_groups["vector"], "weight_decay": 0.0, "lr":cfg["lr_vector"]},
         ]
         optimizer = torch.optim.AdamW(optim_groups)
-        accelerator.print(optimizer)
+        print(optimizer)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
 
-    if accelerator.is_main_process and cfg["save_checkpoints"]:
+    if cfg["save_checkpoints"]:
         schedule = solu_utils.SaveSchedule(
             cfg["max_tokens"],
             cfg["tokens_per_step"],
         )
 
-    model, optimizer, data_loader = accelerator.prepare(
-        model, optimizer, data_loader)
-
     if not cfg["use_acc"]:
         parallel_model = torch.nn.DataParallel(model)
 
-    accelerator.print("Training begins!")
+    print("Training begins!")
 
     step = 0
     start_time = time.time()
-    loss_ewma = torch.tensor(9., device=accelerator.device)
+    loss_ewma = torch.tensor(9., device="cuda")
     total_tokens = 0
-    running_loss = torch.tensor(0., device=accelerator.device)
+    running_loss = torch.tensor(0., device="cuda")
     # n = len(data_loader)
     data_iter = iter(data_loader)
     data = (next(data_iter))
     print(data['tokens'][:3, :100])
     print(tokenizer.batch_decode(data['tokens'][:3, :100]))
-    for c in tqdm.tqdm(range(cfg['max_steps'])):
-        while True:
-            try:
-                batch = next(data_iter)
-                break
-            except Exception as e:
-                print("There was an error in data iter:", e)
-                continue
-        with accelerator.accumulate(model):
-            batch = batch["tokens"]
-            
-            if not cfg["use_acc"]:
-                loss = parallel_model(batch).mean() / cfg["batches_per_step"]
-            else:
-                loss = model(batch)
+    for c, batch in tqdm.tqdm(enumerate(data_iter)):
+    # for c in tqdm.tqdm(range(cfg["batches_per_step"] * cfg
+    # ['max_steps'])):
+    #     while True:
+    #         try:
+    #             batch = next(data_iter)
+    #             break
+    #         except Exception as e:
+    #             print("There was an error in data iter:", e)
+    #             continue
+        batch = batch["tokens"]
+        
+        if not cfg["use_acc"]:
+            loss = parallel_model(batch).mean() / cfg["batches_per_step"]
+        else:
+            loss = model(batch)
 
-            if c<2:
-                accelerator.print(loss)
-            accelerator.backward(loss)
-            if c < 3 and accelerator.is_main_process:
-                accelerator.print(batch.shape)
-            
-            running_loss += loss.detach()
+        if c<2:
+            print(loss)
+        loss.backward()
+        if c < 3:
+            print(batch.shape)
+        
+        running_loss += loss.detach()
+
+        if (c + 1) % cfg["batches_per_step"] == 0:
             total_tokens += cfg["tokens_per_step"]
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), cfg["grad_norm_clip"])
+            optimizer.step()
+            if cfg["lr_schedule"] is not None:
+                scheduler.step()
+            optimizer.zero_grad()
 
-            if (c + 1) % cfg["batches_per_step"] == 0:
-                accelerator.clip_grad_norm_(
-                    model.parameters(), cfg["grad_norm_clip"])
-                optimizer.step()
-                if cfg["lr_schedule"] is not None:
-                    scheduler.step()
-                optimizer.zero_grad()
-
-                if (
-                    accelerator.is_main_process
-                    and MODE!="wandb"
-                    and schedule.step()
-                    and cfg["save_checkpoints"]
-                    and not cfg["debug"]
-                ):
-                    accelerator.print(
-                        f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
-                    )
-                    if not cfg["debug"]:
-                        
-                        torch.save(model.state_dict(), checkpoint_dir/f"tokens_{total_tokens:0>12}.pth")
-                if accelerator.is_main_process and (step+1) % 500 == 0 and MODE!="wandb":
-                    accelerator.print(f"Saving optimizer and scheduler checkpoints at step {step}")
-                    torch.save(
-                        optimizer.state_dict(
-                        ), save_dir/"optimizer_state_dict.pth")
-
-                    torch.save(
-                        scheduler.state_dict(),
-                        save_dir/"scheduler_state_dict.pth",
-                    )
-                loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
-                    1 - cfg["train_loss_ewma_beta"]
+            if (
+                MODE!="wandb"
+                and schedule.step()
+                and cfg["save_checkpoints"]
+                and not cfg["debug"]
+            ):
+                print(
+                    f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
                 )
-                accelerator.wait_for_everyone()
-                if accelerator.is_main_process and step % cfg["log_interval"] == 0:
-                    loss_ewma = accelerator.reduce(loss_ewma, "mean")
-                    log_dict = {
-                            "loss": running_loss.item(),
-                            "loss_ewma": loss_ewma.item(),
-                            "elapsed": time.time() - start_time,
-                            "total_tokens": total_tokens,
-                            "c": c,
-                            "scheduled_lr": scheduler.get_last_lr()[0],
-                            "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
-                        }
-                    accelerator.print(json.dumps(log_dict, indent=2))
-                    wandb.log(
-                        log_dict,
-                        step=step,
-                    )
-                running_loss = running_loss * 0.
-                step += 1
-                
-                if step >= cfg["max_steps"] or step * cfg["tokens_per_step"] >= cfg["truncate_tokens"]:
-                    accelerator.print("Step limit reached at step", step)
-                    break
-            if cfg["debug"] and c < 3 and accelerator.is_main_process:
-                accelerator.print("Batch shape:", batch.shape)
-                accelerator.print(batch[0, :100])
-                accelerator.print(tokenizer.decode(batch[0])[:200])
+                if not cfg["debug"]:
+                    
+                    torch.save(model.state_dict(), checkpoint_dir/f"tokens_{total_tokens:0>12}.pth")
+            if (step+1) % 500 == 0 and MODE!="wandb":
+                print(f"Saving optimizer and scheduler checkpoints at step {step}")
+                torch.save(
+                    optimizer.state_dict(
+                    ), save_dir/"optimizer_state_dict.pth")
 
-            del loss
+                torch.save(
+                    scheduler.state_dict(),
+                    save_dir/"scheduler_state_dict.pth",
+                )
+            loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
+                1 - cfg["train_loss_ewma_beta"]
+            )
+            if step % cfg["log_interval"] == 0:
+                log_dict = {
+                        "loss": running_loss.item(),
+                        "loss_ewma": loss_ewma.item(),
+                        "elapsed": time.time() - start_time,
+                        "total_tokens": total_tokens,
+                        "c": c,
+                        "scheduled_lr": scheduler.get_last_lr()[0],
+                        "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
+                    }
+                print(json.dumps(log_dict, indent=2))
+                wandb.log(
+                    log_dict,
+                    step=step,
+                )
+            running_loss = running_loss * 0.
+            step += 1
+            
+            if step >= cfg["max_steps"] or step * cfg["tokens_per_step"] >= cfg["truncate_tokens"]:
+                print("Step limit reached at step", step)
+                break
+        if cfg["debug"] and c < 3:
+            print("Batch shape:", batch.shape)
+            print(batch[0, :100])
+            print(tokenizer.decode(batch[0])[:200])
 
-    accelerator.print(f"Finished training! Train Loss EWMA: {loss_ewma}")
+        del loss
+
+    print(f"Finished training! Train Loss EWMA: {loss_ewma}")
+    if not cfg["debug"] and MODE != "wandb":
+        torch.save(model.state_dict(), save_dir/f"model_final.pth")
 
     eval_losses = evaluate(parallel_model, 200, cfg['batch_size'], tokenizer)
-    accelerator.print(f"Eval Loss: {eval_losses}")
+    print(f"Eval Loss: {eval_losses}")
 
     wandb.log(eval_losses, step=step)
 
-    if not cfg["debug"] and accelerator.is_main_process and MODE != "wandb":
+    if not cfg["debug"] and MODE != "wandb":
         torch.save(model.state_dict(), save_dir/f"model_final.pth")
         # if total_tokens > 5e9:
         #     solu_utils.move_folder_to_hub(model_name, just_final=True)
@@ -630,10 +644,17 @@ model = Transformer(cfg)
 tokenizer = init_tokenizer(cfg)
 model.tokenizer = tokenizer
 import easy_transformer.evals as evals
-model.load_state_dict(torch.load("/workspace/solu_project/saved_models/v145_4L512W_solu_repo/model_final.pth"))
+model.load_state_dict(torch.load(Path.home()/"solu_project/saved_models/v145_4L512W_solu_repo/model_final.pth"))
 model.cuda()
 parallel_model = torch.nn.DataParallel(model)
 evaluate(parallel_model, truncate=100, batch_size=cfg['batch_size'], tokenizer=tokenizer)
+
+Max batch size scan:
+
+mbs = {}
+for l in range(1, 30):
+    mbs[l] = get_max_batch_size(create_cfg(dict(n_layers=l)))
+json.dump(mbs, open(Path.home()/"solu_project/max_batch_sizes.json", "w"))
 """
 
 # if __name__=="__main__":
