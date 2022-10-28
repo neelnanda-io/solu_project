@@ -15,10 +15,11 @@ datasets.config.IN_MEMORY_MAX_SIZE = 3*10**11
 import time
 start_time = time.time()
 
-c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(200)]
+# c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(200)]
 
 
-dataset = load_dataset('json', data_files=c4_urls, split='train')
+# dataset = load_dataset('json', data_files=c4_urls, split='train')
+dataset = load_dataset("openwebtext", split="train")
 print(dataset)
 print(dataset[0])
 print('Loaded!', time.time()-start_time)

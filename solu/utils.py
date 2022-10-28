@@ -82,10 +82,9 @@ class SaveSchedule:
         if schedule is None:
             self.schedule = np.concatenate(
                 [
-                    np.arange(10) / 10 * 1e-3,
-                    np.arange(2, 20) / 20 * 1e-2,
-                    np.arange(5, 50) / 50 * 1e-1,
-                    np.arange(10, 101) / 100,
+                    np.arange(3) / 3 * 1e-2,
+                    np.arange(1, 10) / 10 * 1e-1,
+                    np.arange(5, 51) / 50,
                 ]
             )
         else:

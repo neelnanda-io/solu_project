@@ -2,10 +2,10 @@
 from neel.imports import *
 n = 30
 
-c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(n)]
+# c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(n)]
 
-dataset = load_dataset('json', data_files=c4_urls, split='train')
-
+# dataset = load_dataset('json', data_files=c4_urls, split='train')
+dataset = load_dataset("openwebtext", split="train")
 print(dataset)
 # %%
 
@@ -17,11 +17,13 @@ tokenizer = AutoTokenizer.from_pretrained("gpt2")
 # # %%
 # full_cc_data = 
 # dataset = 
-tokens_cc = tokenize_and_concatenate(dataset, tokenizer, streaming=False)
+tokens_owt = tokenize_and_concatenate(dataset, tokenizer, streaming=False)
+# tokens_cc = tokenize_and_concatenate(dataset, tokenizer, streaming=False)
 
-tokens_cc.save_to_disk(f'/workspace/data/c4_train_{n}_tokens_gpt2.hf')
+# tokens_cc.save_to_disk(f'/workspace/data/c4_train_{n}_tokens_gpt2.hf')
+tokens_owt.save_to_disk(f'/workspace/data/owt_tokens_gpt2.hf')
 
-print(tokens_cc)
+print(tokens_owt)
 
 # %%
 # mode = "train"

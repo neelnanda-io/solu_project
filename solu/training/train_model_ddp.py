@@ -59,11 +59,12 @@ INITIALIZATION_DIR = Path("/workspace/solu_project/initialization")
 DEFAULT_CFG = {
     "model_name": "gpt2",
     "act_fn": "solu_ln",
-    "lr": 1e-4,  # Effective this / d_model
+    "lr_mlp": 1e-4,  # Effective this / d_model
+    "lr": 1e-5,  # Effective this / d_model
     "batch_size_per_device": 16, # This is batch_size_per_device
     "batches_per_step": 1,
     "seed": -1,
-    "save_checkpoints": True,
+    "save_checkpoints": False,
     "debug": False,
     "debug_batch": False,
     "max_tokens": 5*10**9,
@@ -81,7 +82,7 @@ DEFAULT_CFG = {
     "train_loss_ewma_beta": 0.99,
     "truncate_tokens": 10 ** 12,
     # "truncate_tokens": 10 ** 6,
-    "log_interval": 50,
+    "log_interval": 20,
     "control": 1.,
     "n_ctx": 1024,
 }
@@ -213,7 +214,7 @@ def make_model(cfg):
     model_cfg = copy.deepcopy(original_gpt2.cfg)
     model_cfg.act_fn = cfg["act_fn"]
     model = EasyTransformer(model_cfg, original_gpt2.tokenizer)
-    model.load_state_dict(original_gpt2, strict=False)
+    model.load_state_dict(original_gpt2.state_dict(), strict=False)
     return model
 
 # %%
@@ -265,8 +266,6 @@ def main(ipython_args=None):
     
     if not cfg["debug"] and MODE!="wandb":
         torch.save(model.state_dict(), save_dir/"model_init.pth")
-        if cfg["store_init"]:
-            torch.save(model.state_dict(), INITIALIZATION_DIR/f"{model_name}.pth")
         with open(save_dir/"config.json", "w") as f:
             json.dump(cfg, f, indent=2)
 
@@ -285,11 +284,13 @@ def main(ipython_args=None):
                     / (cfg["max_steps"] - cfg["warmup_steps"])
                 )
 
-        param_groups = {"hidden+unembed": [], "vector": []}
+        param_groups = {"mlp": [], "hidden": [], "vector": []}
         for name, param in model.named_parameters():
             suffix = name.split(".")[-1]
-            if suffix in ["W_K", "W_V", "W_Q", "W_O", "W_U", "W_out", "W_in"]:
-                param_groups["hidden+unembed"].append(param)
+            if "mlp" in name:
+                param_groups["mlp"].append(param)
+            elif suffix in ["W_K", "W_V", "W_Q", "W_O", "W_U",]:
+                param_groups["hidden"].append(param)
             elif suffix in ["W_E", "W_pos"]:
                 param_groups["vector"].append(param)
             elif suffix=="w" or "b" in suffix:
@@ -298,8 +299,10 @@ def main(ipython_args=None):
                 print("Invalid weight name:", name)
                 raise ValueError
         optim_groups = [
-            {"params": param_groups["hidden+unembed"],
-                "weight_decay": cfg["weight_decay"], "lr":cfg["lr"]/(model.cfg.d_model/256)},
+            {"params": param_groups["hidden"],
+                "weight_decay": cfg["weight_decay"], "lr":cfg["lr"]},
+            {"params": param_groups["mlp"],
+                "weight_decay": cfg["weight_decay"], "lr":cfg["lr_mlp"]},
             {"params": param_groups["vector"], "weight_decay": 0.0, "lr":cfg["lr"]},
         ]
         optimizer = torch.optim.AdamW(optim_groups)
@@ -319,7 +322,7 @@ def main(ipython_args=None):
 
     step = 0
     start_time = time.time()
-    loss_ewma = torch.tensor(9., device='cuda')
+    # loss_ewma = torch.tensor(-1., device='cuda')
     total_tokens = 0
     running_loss = torch.tensor(0., device='cuda')
     
@@ -338,7 +341,8 @@ def main(ipython_args=None):
         
         batch = batch["tokens"]
         
-        loss = parallel_model(batch).mean() / cfg["batches_per_step"]
+        with torch.autocast("cuda", torch.bfloat16):
+            loss = parallel_model(batch, return_type="loss").mean() / cfg["batches_per_step"]
 
         if c<2:
             print(loss.item())
@@ -359,8 +363,8 @@ def main(ipython_args=None):
 
             if (
                 MODE!="wandb"
-                and schedule.step()
                 and cfg["save_checkpoints"]
+                and schedule.step()
                 and not cfg["debug"]
             ):
                 print(
@@ -378,9 +382,12 @@ def main(ipython_args=None):
                         scheduler.state_dict(),
                         save_dir/"scheduler_state_dict.pth",
                     )
-            loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
-                1 - cfg["train_loss_ewma_beta"]
-            )
+            if step == 0:
+                loss_ewma = running_loss
+            else:
+                loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
+                    1 - cfg["train_loss_ewma_beta"]
+                )
 
             if step % cfg["log_interval"] == 0:
                 log_dict = {
