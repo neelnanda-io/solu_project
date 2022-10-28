@@ -52,60 +52,38 @@ from solu.transformer import Transformer
 
 from easy_transformer.evals import evaluate, induction_loss
 from easy_transformer.utils import lm_cross_entropy_loss
-
+from easy_transformer import EasyTransformer
 
 INITIALIZATION_DIR = Path("/workspace/solu_project/initialization")
 
 DEFAULT_CFG = {
-    "n_layers": -1,
-    "d_model": -1, # 128 * n_layers
-    "d_mlp": -1, # 4 * d_model
-    "d_head": 64, # 64
-    "n_heads": -1, # d_model//d_head
-    "lr_hidden": 2e-3,  # Effective this / d_model
-    "lr_vector": 1e-3, 
-    "batch_size_per_device": 32, # This is batch_size_per_device
+    "model_name": "gpt2",
+    "act_fn": "solu_ln",
+    "lr": 1e-4,  # Effective this / d_model
+    "batch_size_per_device": 16, # This is batch_size_per_device
     "batches_per_step": 1,
     "seed": -1,
     "save_checkpoints": True,
     "debug": False,
     "debug_batch": False,
-    "normalization": "LN",  # 'LN' 'RMS' or None
-    "max_tokens": 22*10**9,
+    "max_tokens": 5*10**9,
     "version": -1,
-    "use_bfloat16_matmul": True,
-    "n_ctx": 1024,
-    "d_vocab": 48262,
-    "tokenizer_name": "NeelNanda/gpt-neox-tokenizer-digits",
+    "tokenizer_name": "gpt2",
     # "d_vocab": 50278,
     # "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
-    "weight_decay": 0.05,
-    "dataset_name": "c4_code",
-    # "dataset_name": "the_pile",
+    "weight_decay": 0.1,
+    "dataset_name": "c4_gpt2",
     "grad_norm_clip": 1.0,
     "n_devices": torch.cuda.device_count(),
-    "act_fn": "solu_ln",
-    "shortformer_pos": False,
-    "attn_only": False,
-    "ln_eps": 1e-5,
     "lr_schedule": "cosine_warmup",
-    "warmup_tokens": 3*10**8,
+    "warmup_tokens": 10**8,
     "train_loss_ewma_beta": 0.99,
     "truncate_tokens": 10 ** 12,
     # "truncate_tokens": 10 ** 6,
     "log_interval": 50,
-    "initializer_scale_global": 1.,
-    "initializer_scale_hidden": 0.02, # This / sqrt(d_model/256), used for attn and neurons
-    "initializer_scale_embed": 1e-1, # This, constant
-    "initializer_scale_unembed": 0.02, # Set to this / (d_model/256)
-    "neuron_scale": 1.,
-    "neuron_temp": 1.,
-    "use_acc": False,
-    "weight_init_scheme": "gpt2",
-    "fixed_init": "", # The name of the saved initialization file
-    "store_init": False, # Whether to store the initialization for use in future runs.
     "control": 1.,
+    "n_ctx": 1024,
 }
 
 def create_cfg(parsed_args):
@@ -118,13 +96,6 @@ def create_cfg(parsed_args):
 
     cfg["version"] = max(solu_utils.solu_get_prev_versions()) + 1
 
-    if cfg["d_model"]==-1:
-        cfg["d_model"] = 128 * cfg["n_layers"]
-
-    if cfg["n_heads"]==-1:
-        cfg["n_heads"] = cfg["d_model"] // cfg["d_head"]
-    if cfg["d_mlp"]==-1:
-        cfg["d_mlp"] = 4 * cfg["d_model"]
     cfg["tokens_per_step"] = cfg["batch_size_per_device"] * \
         cfg["n_ctx"] * cfg["batches_per_step"] * cfg["n_devices"]
     
@@ -135,12 +106,6 @@ def create_cfg(parsed_args):
 
     if cfg["debug"]:
         cfg["truncate_tokens"] = 5 * 10**6
-    if not cfg['attn_only']:
-        # Formula for number of non-embedding parameters in standard parametrization
-        cfg["n_params"] = 12 * cfg["n_layers"] * cfg["d_model"] ** 2
-    else:
-        # Formula for number of non-embedding parameters in standard parametrization
-        cfg["n_params"] = 3 * cfg["n_layers"] * cfg["d_model"] ** 2
     
     if cfg["seed"]==-1:
         cfg["seed"] = random.randint(0, 2**20 - 1)
@@ -152,8 +117,8 @@ def create_cfg(parsed_args):
     return cfg
 
 def get_max_batch_size(cfg):
-    model = Transformer(cfg)
-    init_weights(model, cfg)
+    model = make_model(cfg)
+    # init_weights(model, cfg)
     model = model.cuda()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     parallel_model = torch.nn.DataParallel(model)
@@ -213,149 +178,20 @@ def init_tokenizer(cfg):
 
 
 def create_dataset(cfg, tokenizer):
-    if cfg['dataset_name']=='c4_code':
-        data = datasets.concatenate_datasets(
-            [
-                datasets.load_from_disk("/workspace/data/c4_train_160_tokens.hf"),
-                datasets.load_from_disk("/workspace/data/codeparrot_train_tokens.hf"),
-                #! TODO Fix after!
-                # datasets.load_from_disk("/workspace/data/c4_train_1_tokens.hf"),
-                # datasets.load_from_disk("/workspace/data/codeparrot_valid_tokens.hf"),
-            ])
-        if cfg["debug"]:
-            print(data)
-        print("Loaded dataset")
-        data = data.with_format("torch")
-        print("Convert to torch")
-        data = data.shuffle(seed=cfg['seed'])
-        print("Shuffled")
-        if cfg["use_acc"]:
-            batch_size = cfg["batch_size_per_device"]
-        else:
-            batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
+    data = datasets.load_from_disk("/workspace/data/c4_train_30_tokens_gpt2.hf")
+    if cfg["debug"]:
+        print(data)
+    print("Loaded dataset")
+    data = data.with_format("torch")
+    print("Convert to torch")
+    data = data.shuffle(seed=cfg['seed'])
+    print("Shuffled")
+    batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
 
-        data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
-        print("Made data loader")
-        print("Created C4 + CodeParrot dataset")
-        return data_loader
-    else:
-        return create_pile_dataset(cfg, tokenizer)
-
-def create_pile_dataset(cfg, tokenizer):
-    tokenizer.pad_token = tokenizer.eos_token
-    seq_len = cfg['n_ctx']
-    def tokenize(examples):
-        start_time = time.time()
-        texts = examples['text']
-        full_text = tokenizer.eos_token.join(texts)
-        div = 20
-        length = len(full_text)//div
-        text_list = [full_text[i*length:(i+1)*length] for i in range(div)]
-        tokens = tokenizer(text_list, return_tensors='np', padding=True)['input_ids'].flatten()
-        tokens = tokens[tokens!=tokenizer.pad_token_id]
-        # print(len(text_list), len(text_list[0]))
-        # print(tokens.shape)
-        n = len(tokens)
-        curr_batch_size = n//(seq_len-1)
-        tokens = tokens[:(seq_len-1)*curr_batch_size]
-        tokens = einops.rearrange(tokens, '(batch_size seq) -> batch_size seq', batch_size=curr_batch_size, seq=seq_len-1)
-        prefix = np.ones((curr_batch_size, 1), dtype=np.int64)*tokenizer.bos_token_id
-        # print(tokens.shape, n, curr_batch_size, seq_len)
-        return {'tokens': np.concatenate([prefix, tokens], axis=1)}# 
-
-
-    randperm = np.random.permutation(28)
-    print('Permutation of PILE URLs', randperm)
-    pile_urls = [f"https://the-eye.eu/public/AI/pile/train/{i:0>2}.jsonl.zst" for i in randperm]
-    dataset = load_dataset('json', data_files=pile_urls, streaming=True, split='train')
-    dataset = dataset.remove_columns('meta')
-
-    dataset = dataset.map(tokenize, batched=True, remove_columns=['text'])
-    dataset = dataset.with_format(type='torch')
-    if not cfg['debug']:
-        # Note that this line is super important to avoiding overfitting and to generalise! Without shuffling data points are way too correlated
-        print("Shuffling dataset")
-        dataset = dataset.shuffle(seed=cfg['seed'], buffer_size=30000)
-    if cfg["use_acc"]:
-        batch_size = cfg["batch_size_per_device"]
-    else:
-        batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
-
-    train_data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=8)
-    print("Created PILE dataset")
-    return train_data_loader
-
-def init_weights(model, cfg):
-
-    if cfg["fixed_init"]:
-        print("Using custom initialization from", cfg["fixed_init"])
-        init_state_dict = torch.load(INITIALIZATION_DIR/f"{cfg['fixed_init']}.pth")
-        current_state_dict = model.state_dict()
-        filtered_state_dict = {k:v for k, v in init_state_dict.items() if k in current_state_dict}
-        model.load_state_dict(filtered_state_dict, strict=True)
-        return
-    elif cfg['weight_init_scheme'] == 'old':
-        print("Using old init scheme")
-        init_weights_old(model, cfg)
-        return
-    elif cfg['weight_init_scheme'] == 'gpt2':
-        print("Using GPT2 init scheme")
-        init_weights_gpt2(model, cfg)
-        return
-    elif cfg["weight_init_scheme"] == "mup":
-        print("Using mup init scheme")
-        # Using mu-P factorization
-        global_scale = cfg["initializer_scale_global"]
-        # Set in my hyper-param sweep over a 2L256W model
-        base_d_model = 256
-        for name, param in model.named_parameters():
-            if "W_" in name:
-                if name.endswith("W_U"):
-                    scale = cfg["initializer_scale_unembed"] * global_scale / (cfg["d_model"]/base_d_model)
-                    torch.nn.init.normal_(param, std=scale)
-                elif name.endswith("W_E") or name.endswith("W_pos"):
-                    scale = cfg["initializer_scale_embed"] * global_scale
-                    torch.nn.init.normal_(param, std=scale)
-                elif (
-                    name.endswith("W_K") or
-                    name.endswith("W_Q") or
-                    name.endswith("W_V") or
-                    name.endswith("W_O") or
-                    name.endswith("W_in") or
-                    name.endswith("W_out")
-                    ):
-                    scale = cfg["initializer_scale_hidden"] * global_scale / np.sqrt(cfg["d_model"]/base_d_model)
-                    torch.nn.init.normal_(param, std=scale)
-                    if name.endswith("W_out"):
-                        param.data = param.data / 2
-                else:
-                    ValueError(f"Unknown weight name {name}")
-    else:
-        raise ValueError(f"Unknown weight init scheme |{cfg['weight_init_scheme']}|")
-
-def init_weights_old(model, cfg):
-    global_scale = np.sqrt(5)*cfg['initializer_scale_global']
-    for name, param in model.named_parameters():
-        if "W_" in name:
-            nn.init.kaiming_uniform_(param, a=global_scale, mode='fan_out')
-
-def init_weights_gpt2(model, cfg):
-    global_scale = 0.02*cfg['initializer_scale_global']
-    for name, param in model.named_parameters():
-        if name.endswith("W_pos"):
-            scale = global_scale/2
-            print(name, scale)
-            nn.init.normal_(param, std=scale)
-        elif name.endswith("W_out") or name.endswith("W_O"):
-            scale = global_scale/np.sqrt(cfg['n_layers'])
-            print(name, scale)
-            nn.init.normal_(param, std=scale)
-        elif "W_" in name:
-            scale = global_scale
-            print(name, scale)
-            nn.init.normal_(param, std=scale)
-        else:
-            print(name, "no init")
+    data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
+    print("Made data loader")
+    print("Created C4 GPT2 dataset")
+    return data_loader
 
 def test(args):
     # from neel.imports import *; from solu.training.train_model_ddp import *
@@ -365,33 +201,20 @@ def test(args):
     model = Transformer(cfg)
     data_loader = create_dataset(cfg,tokenizer)
     data = next(iter(data_loader))['text'][:4]
-    init_weights(model, cfg)
+    # init_weights(model, cfg)
     loss = model(data)
     return cfg, model, tokenizer, data_loader, data, loss
 
 def make_model_name(cfg):
-    if cfg['attn_only']:
-        leaf = 'attn_only'
-    elif cfg['act_fn']=='solu_ln':
-        leaf = 'solu'
-    elif cfg['act_fn']=='gelu':
-        leaf = 'gelu'
-    else:
-        raise ValueError(f"Invalid config for model name: {cfg}")
-    return f"v{cfg['version']}_{cfg['n_layers']}L{cfg['d_model']}W_{leaf}_{cfg['dataset_name']}"
+    return f"v{cfg['version']}_{cfg['model_name']}_fine_tuned_solu"
 
-# @torch.inference_mode()
-# def induction_loss(model, tokenizer, batch_size=16, seq_len=384):
-#     rep_tokens = torch.randint(100, 40000, (batch_size, seq_len)).cuda()
-#     rep_tokens = einops.repeat(rep_tokens, "b p -> b (2 p)")
-#     rep_tokens[:, 0] = tokenizer.bos_token_id
-
-#     logits = model(rep_tokens, return_type="logits")
-
-#     lps = lm_cross_entropy_loss(logits, rep_tokens, return_per_token=True)
-
-#     # line(lps)
-#     return (lps[:, seq_len+1:].mean())
+def make_model(cfg):
+    original_gpt2 = EasyTransformer.from_pretrained(cfg["model_name"], fold_ln=False, center_writing_weights=False, center_unembed=False, device='cpu')
+    model_cfg = copy.deepcopy(original_gpt2.cfg)
+    model_cfg.act_fn = cfg["act_fn"]
+    model = EasyTransformer(model_cfg, original_gpt2.tokenizer)
+    model.load_state_dict(original_gpt2, strict=False)
+    return model
 
 # %%
 def main(ipython_args=None):
@@ -410,7 +233,6 @@ def main(ipython_args=None):
 
         args = parser.parse_args()
         cfg = create_cfg(vars(args))
-        accelerator = Accelerator(gradient_accumulation_steps=cfg["batches_per_step"])
     else:
         run = wandb.init(project="solu",
         entity="mechanistic-interpretability", 
@@ -421,19 +243,12 @@ def main(ipython_args=None):
         print("Setting run config to wandb")
         print(run.config["n_layers"])
         cfg = create_cfg(cfg)
-        accelerator = Accelerator(gradient_accumulation_steps=cfg["batches_per_step"])
 
     set_seed(cfg["seed"])
-    if accelerator.num_processes > 1:
-        accelerator.print("Using accelerate!")
-        cfg["use_acc"] = True 
     
-    
-    print("Is main process", accelerator.is_main_process)
-    accelerator.print("initialized accelerator")
-    accelerator.print(json.dumps(cfg, indent=2))
+    print(json.dumps(cfg, indent=2))
 
-    if accelerator.is_main_process and MODE!="wandb":
+    if MODE!="wandb":
         model_name = make_model_name(cfg)
         save_dir = Path(f"/workspace/solu_project/saved_models/{model_name}")
         checkpoint_dir = save_dir/"checkpoints"
@@ -444,21 +259,18 @@ def main(ipython_args=None):
         entity="mechanistic-interpretability", 
         config=cfg, name=model_name)
 
-    tokenizer = init_tokenizer(cfg)
+    model = make_model(cfg)
+    tokenizer = model.tokenizer
     data_loader = create_dataset(cfg, tokenizer)
-
-
-    model = Transformer(cfg)
-    init_weights(model, cfg)    
     
-    if accelerator.is_main_process and not cfg["debug"] and MODE!="wandb":
+    if not cfg["debug"] and MODE!="wandb":
         torch.save(model.state_dict(), save_dir/"model_init.pth")
         if cfg["store_init"]:
             torch.save(model.state_dict(), INITIALIZATION_DIR/f"{model_name}.pth")
         with open(save_dir/"config.json", "w") as f:
             json.dump(cfg, f, indent=2)
 
-    model.to(accelerator.device)
+    model.to("cuda")
     
     if cfg["lr_schedule"] is not None:
 
@@ -487,33 +299,30 @@ def main(ipython_args=None):
                 raise ValueError
         optim_groups = [
             {"params": param_groups["hidden+unembed"],
-                "weight_decay": cfg["weight_decay"], "lr":cfg["lr_hidden"]/(cfg["d_model"]/256)},
-            {"params": param_groups["vector"], "weight_decay": 0.0, "lr":cfg["lr_vector"]},
+                "weight_decay": cfg["weight_decay"], "lr":cfg["lr"]/(model.cfg.d_model/256)},
+            {"params": param_groups["vector"], "weight_decay": 0.0, "lr":cfg["lr"]},
         ]
         optimizer = torch.optim.AdamW(optim_groups)
-        accelerator.print(optimizer)
+        print(optimizer)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
+        print(scheduler)
 
-    if accelerator.is_main_process and cfg["save_checkpoints"]:
+    if cfg["save_checkpoints"]:
         schedule = solu_utils.SaveSchedule(
             cfg["max_tokens"],
             cfg["tokens_per_step"],
         )
+        
+    parallel_model = torch.nn.DataParallel(model)
 
-    model, optimizer, data_loader = accelerator.prepare(
-        model, optimizer, data_loader)
-
-    if not cfg["use_acc"]:
-        parallel_model = torch.nn.DataParallel(model)
-
-    accelerator.print("Training begins!")
+    print("Training begins!")
 
     step = 0
     start_time = time.time()
-    loss_ewma = torch.tensor(9., device=accelerator.device)
+    loss_ewma = torch.tensor(9., device='cuda')
     total_tokens = 0
-    running_loss = torch.tensor(0., device=accelerator.device)
-    # n = len(data_loader)
+    running_loss = torch.tensor(0., device='cuda')
+    
     data_iter = iter(data_loader)
     data = (next(data_iter))
     print(data['tokens'][:3, :100])
@@ -526,46 +335,41 @@ def main(ipython_args=None):
             except Exception as e:
                 print("There was an error in data iter:", e)
                 continue
-        with accelerator.accumulate(model):
-            batch = batch["tokens"]
-            
-            if not cfg["use_acc"]:
-                loss = parallel_model(batch).mean() / cfg["batches_per_step"]
-            else:
-                loss = model(batch)
+        
+        batch = batch["tokens"]
+        
+        loss = parallel_model(batch).mean() / cfg["batches_per_step"]
 
-            if c<2:
-                accelerator.print(loss)
-            accelerator.backward(loss)
-            if c < 3 and accelerator.is_main_process:
-                accelerator.print(batch.shape)
-            
-            running_loss += loss.detach()
-            total_tokens += cfg["tokens_per_step"]
+        if c<2:
+            print(loss.item())
+        loss.backward()
+        if c < 3:
+            print(batch.shape)
+        
+        running_loss += loss.detach()
+        total_tokens += cfg["tokens_per_step"]
 
-            if (c + 1) % cfg["batches_per_step"] == 0:
-                accelerator.clip_grad_norm_(
-                    model.parameters(), cfg["grad_norm_clip"])
-                optimizer.step()
-                if cfg["lr_schedule"] is not None:
-                    scheduler.step()
-                optimizer.zero_grad()
+        if (c + 1) % cfg["batches_per_step"] == 0:
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), cfg["grad_norm_clip"])
+            optimizer.step()
+            if cfg["lr_schedule"] is not None:
+                scheduler.step()
+            optimizer.zero_grad()
 
-                if (
-                    accelerator.is_main_process
-                    and MODE!="wandb"
-                    and schedule.step()
-                    and cfg["save_checkpoints"]
-                    and not cfg["debug"]
-                ):
-                    accelerator.print(
-                        f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
-                    )
-                    if not cfg["debug"]:
-                        
-                        torch.save(model.state_dict(), checkpoint_dir/f"tokens_{total_tokens:0>12}.pth")
-                if accelerator.is_main_process and (step+1) % 500 == 0 and MODE!="wandb":
-                    accelerator.print(f"Saving optimizer and scheduler checkpoints at step {step}")
+            if (
+                MODE!="wandb"
+                and schedule.step()
+                and cfg["save_checkpoints"]
+                and not cfg["debug"]
+            ):
+                print(
+                    f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
+                )
+                if not cfg["debug"]:
+                    torch.save(model.state_dict(), checkpoint_dir/f"tokens_{total_tokens:0>12}.pth")
+                if step > cfg["max_steps"] * 0.05:
+                    print(f"Saving optimizer and scheduler checkpoints at step {step}")
                     torch.save(
                         optimizer.state_dict(
                         ), save_dir/"optimizer_state_dict.pth")
@@ -574,47 +378,46 @@ def main(ipython_args=None):
                         scheduler.state_dict(),
                         save_dir/"scheduler_state_dict.pth",
                     )
-                loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
-                    1 - cfg["train_loss_ewma_beta"]
+            loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
+                1 - cfg["train_loss_ewma_beta"]
+            )
+
+            if step % cfg["log_interval"] == 0:
+                log_dict = {
+                        "loss": running_loss.item(),
+                        "loss_ewma": loss_ewma.item(),
+                        "elapsed": time.time() - start_time,
+                        "total_tokens": total_tokens,
+                        "c": c,
+                        "scheduled_lr": scheduler.get_last_lr()[0],
+                        "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
+                    }
+                print(json.dumps(log_dict, indent=2))
+                wandb.log(
+                    log_dict,
+                    step=step,
                 )
-                accelerator.wait_for_everyone()
-                if accelerator.is_main_process and step % cfg["log_interval"] == 0:
-                    loss_ewma = accelerator.reduce(loss_ewma, "mean")
-                    log_dict = {
-                            "loss": running_loss.item(),
-                            "loss_ewma": loss_ewma.item(),
-                            "elapsed": time.time() - start_time,
-                            "total_tokens": total_tokens,
-                            "c": c,
-                            "scheduled_lr": scheduler.get_last_lr()[0],
-                            "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
-                        }
-                    accelerator.print(json.dumps(log_dict, indent=2))
-                    wandb.log(
-                        log_dict,
-                        step=step,
-                    )
-                running_loss = running_loss * 0.
-                step += 1
-                
-                if step >= cfg["max_steps"] or step * cfg["tokens_per_step"] >= cfg["truncate_tokens"]:
-                    accelerator.print("Step limit reached at step", step)
-                    break
-            if cfg["debug"] and c < 3 and accelerator.is_main_process:
-                accelerator.print("Batch shape:", batch.shape)
-                accelerator.print(batch[0, :100])
-                accelerator.print(tokenizer.decode(batch[0])[:200])
+            running_loss = running_loss * 0.
+            step += 1
+            
+            if step >= cfg["max_steps"] or step * cfg["tokens_per_step"] >= cfg["truncate_tokens"]:
+                print("Step limit reached at step", step)
+                break
+        if cfg["debug"] and c < 3:
+            print("Batch shape:", batch.shape)
+            print(batch[0, :100])
+            print(tokenizer.decode(batch[0])[:200])
 
-            del loss
+        del loss
 
-    accelerator.print(f"Finished training! Train Loss EWMA: {loss_ewma}")
+    print(f"Finished training! Train Loss EWMA: {loss_ewma}")
 
     eval_losses = evaluate(parallel_model, 200, cfg['batch_size'], tokenizer)
-    accelerator.print(f"Eval Loss: {eval_losses}")
+    print(f"Eval Loss: {eval_losses}")
 
     wandb.log(eval_losses, step=step)
 
-    if not cfg["debug"] and accelerator.is_main_process and MODE != "wandb":
+    if not cfg["debug"] and MODE != "wandb":
         torch.save(model.state_dict(), save_dir/f"model_final.pth")
         # if total_tokens > 5e9:
         #     solu_utils.move_folder_to_hub(model_name, just_final=True)

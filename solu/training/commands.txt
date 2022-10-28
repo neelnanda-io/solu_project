@@ -11,3 +11,6 @@ python train_model_ddp.py --n_layers 4 --d_model 512 --attn_only --seed 9153 --f
 python train_model_ddp.py --n_layers 6 --d_model 768 --seed 6666 --batch_size_per_device 32
 
 move_folder_to_hub("v204_1L512W_attn_only_c4_code", "Attn_Only_1L512W_C4_Code", just_final=False); move_folder_to_hub("v205_2L512W_attn_only_c4_code", "Attn_Only_2L512W_C4_Code", just_final=False); move_folder_to_hub("v206_3L512W_attn_only_c4_code", "Attn_Only_3L512W_C4_Code", just_final=False)
+
+python train_model_ddp.py --seed 666890 --max_tokens 500000000 --act_fn gelu
+python train_model_ddp.py --seed 666890 --max_tokens 500000000
