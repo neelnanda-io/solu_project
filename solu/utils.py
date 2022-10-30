@@ -120,7 +120,7 @@ def push_to_hub(local_dir):
     os.system(f"git -C {local_dir} add .")
     os.system(f"git -C {local_dir} commit -m 'Auto Commit'")
     os.system(f"git -C {local_dir} push")
-
+# move_folder_to_hub("v235_4L512W_solu_wikipedia", "NeelNanda/SoLU_4L512W_Wiki_Finetune", just_final=False)
 def move_folder_to_hub(model_name, repo_name=None, just_final=True, debug=False):
     if repo_name is None:
         repo_name = model_name

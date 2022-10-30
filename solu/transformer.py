@@ -297,6 +297,8 @@ class Attention(nn.Module):
         # [batch, head_index, head_index, d_model]
         self.hook_result = HookPoint()
 
+        self.pattern_dropout = nn.Dropout(self.cfg["pdrop"])
+
     def forward(self, resid_pre, attn_input=None):
         if self.cfg["shortformer_pos"]:
             q = self.hook_q(
@@ -348,6 +350,7 @@ class Attention(nn.Module):
         attn_matrix = self.hook_attn(
             F.softmax(attn_scores.to(torch.float32), dim=-1)
         )  # [batch, head_index, query_pos, key_pos]
+        attn_matrix = self.pattern_dropout(attn_matrix)
         z = self.hook_z(
             amp_einsum(
                 "bpih,biqp->bqih", v, attn_matrix, self.cfg["use_bfloat16_matmul"]
@@ -433,6 +436,9 @@ class TransformerBlock(nn.Module):
             self.mlp = MLP(self.cfg)
             self.hook_mlp_out = HookPoint()  # [batch, pos, d_model]
             self.hook_resid_mid = HookPoint()  # [batch, pos, d_model]
+
+        self.attn_dropout = nn.Dropout(self.cfg["pdrop"])
+        self.mlp_dropout = nn.Dropout(self.cfg["pdrop"])
     def forward(self, x, pos_embed):
         resid_pre = self.hook_resid_pre(x)  # [batch, pos, d_model]
         if self.cfg['shortformer_pos']:
@@ -444,6 +450,8 @@ class TransformerBlock(nn.Module):
             attn_out = self.hook_attn_out(
                 self.attn(self.ln1(resid_pre))
             )  # [batch, pos, d_model]
+        if self.cfg["use_dropout"]:
+            attn_out = self.attn_dropout(attn_out)
         if self.cfg["attn_only"]:
             resid_post = self.hook_resid_post(
                 resid_pre + attn_out)  # [batch, pos, d_model]
@@ -454,6 +462,8 @@ class TransformerBlock(nn.Module):
             mlp_out = self.hook_mlp_out(
                 self.mlp(self.ln2(resid_mid))
             )  # [batch, pos, d_model]
+            if self.cfg["use_dropout"]:
+                mlp_out = self.mlp_dropout(mlp_out)
             resid_post = self.hook_resid_post(
                 resid_mid + mlp_out)  # [batch, pos, d_model]
         return resid_post
@@ -482,6 +492,8 @@ class Transformer(HookedRootModule):
         )
         self.unembed = Unembed(self.cfg)
 
+        self.embed_drop = nn.Dropout(self.cfg["pdrop"])
+
         # Gives each module a parameter with its name (relative to this root module)
         # Needed for HookPoints to work
         self.setup_hooks()
@@ -495,6 +507,8 @@ class Transformer(HookedRootModule):
             residual = embed + pos_embed  # [batch, pos, d_model]
         else:
             residual = embed  # [batch, pos, d_model]
+        if self.cfg["use_dropout"]:
+            residual = self.embed_drop(residual)
         for block in self.blocks:
             # Note that each block includes skip connections, so we don't need
             # residual + block(residual)

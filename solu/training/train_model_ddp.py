@@ -71,7 +71,7 @@ DEFAULT_CFG = {
     "debug": False,
     "debug_batch": False,
     "normalization": "LN",  # 'LN' 'RMS' or None
-    "max_tokens": 30*10**9,
+    "max_tokens": 22*10**9,
     "version": -1,
     "use_bfloat16_matmul": True,
     "n_ctx": 1024,
@@ -81,7 +81,9 @@ DEFAULT_CFG = {
     # "tokenizer_name": "EleutherAI/gpt-neox-20b",
     "betas": (0.9, 0.99),
     "weight_decay": 0.05,
-    "dataset_name": "c4_code",
+    # "dataset_name": "c4_code",
+    "dataset_name": "c4_code_big",
+    # "dataset_name": "wikipedia",
     # "dataset_name": "the_pile",
     "grad_norm_clip": 1.0,
     "n_devices": torch.cuda.device_count(),
@@ -106,6 +108,8 @@ DEFAULT_CFG = {
     "fixed_init": "", # The name of the saved initialization file
     "store_init": False, # Whether to store the initialization for use in future runs.
     "control": 1.,
+    "use_dropout": False,
+    "pdrop": 0.1,
 }
 
 def create_cfg(parsed_args):
@@ -221,19 +225,48 @@ def init_tokenizer(cfg):
     tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_name"])
     print("Loaded tokenizer:", tokenizer)
     return tokenizer
+from neel.imports import *
+from easy_transformer.utils import tokenize_and_concatenate
 
-
-def create_dataset(cfg, tokenizer):
+def create_dataset(cfg, tokenizer, test=False):
     # return create_pile_dataset(cfg, tokenizer)
-    if cfg['dataset_name']=='c4_code':
-        data = datasets.concatenate_datasets(
-            [
-                datasets.load_from_disk(Path.home()/"data/c4_train_tokens_v2.hf"),
-                datasets.load_from_disk(Path.home()/"data/codeparrot_train_tokens_v2.hf"),
-                #! TODO Fix after!
-                # datasets.load_from_disk(Path.home()/"data/c4_train_1_tokens.hf"),
-                # datasets.load_from_disk(Path.home()/"data/codeparrot_valid_tokens.hf"),
-            ])
+    if cfg['dataset_name']=='c4_code_big':
+
+        n = 640
+        c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(n)]
+
+        dataset = load_dataset('json', data_files=c4_urls, split='train')
+        data = tokenize_and_concatenate(dataset, tokenizer, streaming=False)
+        print("Loaded dataset")
+        data = data.with_format("torch")
+        print("Convert to torch")
+        data = data.shuffle(seed=cfg['seed'])
+        print("Shuffled")
+        if cfg["use_acc"]:
+            batch_size = cfg["batch_size_per_device"]
+        else:
+            batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
+
+        data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
+        print("Made data loader")
+        print("Created C4 + CodeParrot dataset")
+        return data_loader
+    elif cfg['dataset_name']=='c4_code':
+        if test:
+            data = datasets.concatenate_datasets(
+                [
+                    datasets.load_from_disk(Path.home()/"data/c4_valid_tokens.hf"),
+                    datasets.load_from_disk(Path.home()/"data/codeparrot_valid_tokens.hf"),
+                ])
+        else:
+            data = datasets.concatenate_datasets(
+                [
+                    datasets.load_from_disk(Path.home()/"data/c4_train_160_tokens.hf"),
+                    datasets.load_from_disk(Path.home()/"data/codeparrot_train_tokens.hf"),
+                    #! TODO Fix after!
+                    # datasets.load_from_disk(Path.home()/"data/c4_train_1_tokens.hf"),
+                    # datasets.load_from_disk(Path.home()/"data/codeparrot_valid_tokens.hf"),
+                ])
         print("Using version 2 of the data, containing <EOS> delimiters AND <BOS>!")
         print(data)
         if cfg["debug"]:
@@ -251,6 +284,26 @@ def create_dataset(cfg, tokenizer):
         data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
         print("Made data loader")
         print("Created C4 + CodeParrot dataset")
+        return data_loader
+    elif cfg['dataset_name']=='wikipedia':
+        data = datasets.load_from_disk(Path.home()/"data/wiki_train_tokens.hf")
+        print("Using version 2 of the data, containing <EOS> delimiters AND <BOS>!")
+        print(data)
+        if cfg["debug"]:
+            print(data)
+        print("Loaded dataset")
+        data = data.with_format("torch")
+        print("Convert to torch")
+        data = data.shuffle(seed=cfg['seed'])
+        print("Shuffled")
+        if cfg["use_acc"]:
+            batch_size = cfg["batch_size_per_device"]
+        else:
+            batch_size = cfg["batch_size_per_device"] * cfg["n_devices"]
+
+        data_loader = DataLoader(data, num_workers=8, batch_size=batch_size)
+        print("Made data loader")
+        print("Created Wikipedia dataset")
         return data_loader
     else:
         return create_pile_dataset(cfg, tokenizer)
@@ -378,6 +431,7 @@ def test(args):
 
     model = Transformer(cfg)
     data_loader = create_dataset(cfg,tokenizer)
+    data_loader = create_dataset(cfg,tokenizer, test=True)
     data = next(iter(data_loader))['text'][:4]
     init_weights(model, cfg)
     loss = model(data)
@@ -421,6 +475,12 @@ class Accelerator:
     def prepare(self, *args):
         return args
 
+def data_wrapper(data_iter, bos_token_id):
+    while True:
+        batch = next(data_iter)
+        batch['tokens'][:, 0] = bos_token_id
+        yield batch
+
 def main(ipython_args=None):
     if MODE != "wandb":
         parser = argparse.ArgumentParser()
@@ -463,6 +523,7 @@ def main(ipython_args=None):
 
     tokenizer = init_tokenizer(cfg)
     data_loader = create_dataset(cfg, tokenizer)
+    test_data_loader = create_dataset(cfg, tokenizer, test=True)
 
 
     model = Transformer(cfg)
@@ -516,19 +577,25 @@ def main(ipython_args=None):
             cfg["max_tokens"],
             cfg["tokens_per_step"],
         )
-
+    model.train()
     if not cfg["use_acc"]:
         parallel_model = torch.nn.DataParallel(model)
+        parallel_model.train()
 
     print("Training begins!")
 
     step = 0
     start_time = time.time()
-    loss_ewma = torch.tensor(9., device="cuda")
+    train_loss_ewma = torch.tensor(9., device="cuda")
+    if cfg["use_dropout"]:
+        test_loss_ewma = torch.tensor(9., device="cuda")
     total_tokens = 0
     running_loss = torch.tensor(0., device="cuda")
     # n = len(data_loader)
     data_iter = iter(data_loader)
+    data_iter = data_wrapper(data_iter, tokenizer.bos_token_id)
+    test_data_iter = iter(test_data_loader)
+    test_data_iter = data_wrapper(test_data_iter, tokenizer.bos_token_id)
     data = (next(data_iter))
     print(data['tokens'][:3, :100])
     print(tokenizer.batch_decode(data['tokens'][:3, :100]))
@@ -545,17 +612,17 @@ def main(ipython_args=None):
         batch = batch["tokens"]
         
         if not cfg["use_acc"]:
-            loss = parallel_model(batch).mean() / cfg["batches_per_step"]
+            train_loss = parallel_model(batch).mean() / cfg["batches_per_step"]
         else:
-            loss = model(batch)
+            train_loss = model(batch)
 
         if c<2:
-            print(loss)
-        loss.backward()
+            print(train_loss)
+        train_loss.backward()
         if c < 3:
             print(batch.shape)
         
-        running_loss += loss.detach()
+        running_loss += train_loss.detach()
 
         if (c + 1) % cfg["batches_per_step"] == 0:
             total_tokens += cfg["tokens_per_step"]
@@ -588,19 +655,41 @@ def main(ipython_args=None):
                     scheduler.state_dict(),
                     save_dir/"scheduler_state_dict.pth",
                 )
-            loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
-                1 - cfg["train_loss_ewma_beta"]
-            )
+            if step==0:
+                train_loss_ewma = running_loss
+            else:
+                train_loss_ewma = train_loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
+                    1 - cfg["train_loss_ewma_beta"]
+                )
             if step % cfg["log_interval"] == 0:
                 log_dict = {
-                        "loss": running_loss.item(),
-                        "loss_ewma": loss_ewma.item(),
                         "elapsed": time.time() - start_time,
                         "total_tokens": total_tokens,
                         "c": c,
                         "scheduled_lr": scheduler.get_last_lr()[0],
                         "induction_loss": induction_loss(model, tokenizer, batch_size=4, subseq_len=300).item(),
                     }
+                if cfg["use_dropout"]:
+                    log_dict["train_loss"] = running_loss.item()
+                    log_dict["train_loss_ewma"] = train_loss_ewma.item()
+                    with torch.inference_mode():
+                        parallel_model.eval()
+                        model.eval()
+                        test_batch = next(test_data_iter)
+                        test_batch = test_batch["tokens"].cuda()
+                        test_loss = parallel_model(test_batch).mean()
+                        if step==0:
+                            test_loss_ewma = test_loss
+                        else:
+                            test_loss_ewma = test_loss_ewma * 0.9 + test_loss * (
+                            1 - 0.9)
+                        parallel_model.train()
+                        model.train()
+                    log_dict["loss"] = test_loss.item()
+                    log_dict["loss_ewma"] = test_loss_ewma.item()
+                else:
+                    log_dict["loss"] = running_loss.item()
+                    log_dict["loss_ewma"] = train_loss_ewma.item()
                 print(json.dumps(log_dict, indent=2))
                 wandb.log(
                     log_dict,
@@ -617,9 +706,9 @@ def main(ipython_args=None):
             print(batch[0, :100])
             print(tokenizer.decode(batch[0])[:200])
 
-        del loss
+        del train_loss
 
-    print(f"Finished training! Train Loss EWMA: {loss_ewma}")
+    print(f"Finished training! Train Loss EWMA: {train_loss_ewma}")
     if not cfg["debug"] and MODE != "wandb":
         torch.save(model.state_dict(), save_dir/f"model_final.pth")
 
