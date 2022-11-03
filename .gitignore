@@ -20,3 +20,7 @@ solu/training/models--NeelNanda--SoLU/
 solu.egg-info/*
 solu.egg-info/PKG-INFO
 solu.egg-info/SOURCES.txt
+html_pages/
+max_act_solu_v2_*
+*.hf
+solu/microscope/max_act_stores/
