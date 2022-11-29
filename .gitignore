@@ -1,3 +1,8 @@
 solu_checkpoints/*
 html_pages/*
 max_act_solu_v*
+*.pth
+training/*.pth
+solu/training/*.pth
+solu/training/cache
+solu/training/wandb
