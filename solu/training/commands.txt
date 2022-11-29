@@ -1,0 +1,21 @@
+python train_model_ddp.py --n_layers 1 --d_model 512 --act_fn gelu --seed 387976 --fixed_init 1L512W_init
+python train_model_ddp.py --n_layers 2 --d_model 512 --act_fn gelu --seed 259123 --fixed_init 2L512W_init
+python train_model_ddp.py --n_layers 3 --d_model 512 --act_fn gelu --seed 989422 --fixed_init 3L512W_init
+python train_model_ddp.py --n_layers 4 --d_model 512 --seed 9153 --fixed_init 4L512W_init --use_dropout
+python train_model_ddp.py --n_layers 1 --d_model 512 --attn_only --seed 387976 --fixed_init 1L512W_init
+python train_model_ddp.py --n_layers 2 --d_model 512 --attn_only --seed 259123 --fixed_init 2L512W_init
+python train_model_ddp.py --n_layers 3 --d_model 512 --attn_only --seed 989422 --fixed_init 3L512W_init
+python train_model_ddp.py --n_layers 4 --d_model 512 --attn_only --seed 9153 --fixed_init 4L512W_init
+
+
+python train_model_ddp.py --n_layers 6 --d_model 768 --seed 6666 --batch_size_per_device 32
+
+move_folder_to_hub("v204_1L512W_attn_only_c4_code", "Attn_Only_1L512W_C4_Code", just_final=False); move_folder_to_hub("v205_2L512W_attn_only_c4_code", "Attn_Only_2L512W_C4_Code", just_final=False); move_folder_to_hub("v206_3L512W_attn_only_c4_code", "Attn_Only_3L512W_C4_Code", just_final=False)
+
+python ~/solu_project/solu/training/train_model_ddp.py --n_layers 12 --seed 121212 --batches_per_step 4
+
+python train_model_ddp.py --n_layers 1 --d_model 512 --seed 56721 --fixed_init 1L512W_final --max_tokens 4800000000 --dataset_name wikipedia --lr_hidden 0.0005 --lr_vector 0.00025 --batch_size_per_device 32
+
+python train_model_ddp.py --n_layers 4 --d_model 512 --seed 9153 --fixed_init 4L512W_init --use_dropout --batch_size_per_device 32
+
+python train_model_ddp.py --n_layers 4 --d_model 512 --seed 97143 --batch_size_per_device 32 --max_tokens 900000000000

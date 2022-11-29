@@ -1,10 +1,30 @@
+from pprint import pprint
+from accelerate import notebook_launcher
+from accelerate.utils import set_seed, write_basic_config
+from accelerate import Accelerator
+import accelerate
+import wandb
+import datasets
+from transformers import AutoTokenizer
+import json
+from datasets import load_dataset
+import transformers
+from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+import itertools
+import copy
+import collections
+import gc
+import pandas as pd
+from functools import *
+from torch.utils.data import DataLoader
+import plotly.graph_objects as go
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.nn import DataParallel
+
 # from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 import einops
@@ -23,31 +43,9 @@ import plotly.express as px
 import plotly.io as pio
 
 pio.renderers.default = "colab"
-import plotly.graph_objects as go
 
-from torch.utils.data import DataLoader
-
-from functools import *
-import pandas as pd
-import gc
-import collections
-import copy
 
 # import comet_ml
-import itertools
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-import transformers
-from datasets import load_dataset
-import json
-from transformers import AutoTokenizer
-import transformers
-import datasets
-import time
-import wandb
-
-import os
-
-from pprint import pprint
 
 
 def create_cfg():
@@ -57,16 +55,16 @@ def create_cfg():
         "lr": 1e-3,
         "batch_size": 36 * 8,
         "batches_per_step": 1,
-        "seed": 987422,
+        "seed": 98742,
         # 'checkpoint_every_tokens':5*10**7,
-        "use_checkpoint_schedule": True,
+        "use_checkpoint_schedule": False,
         "debug": False,
         "debug_batch": False,
         "debug_overfit": False,
         "normalization": "LN",  # 'LN' 'RMS' or None
         # "max_tokens": 15 * 10 ** 9,
-        "max_tokens": 22 * 10**9,
-        "version": 37,
+        "max_tokens": 15 * 10**9,
+        "version": 38,
         "use_float16": False,
         "use_bfloat16": False,
         "save_checkpoints_to_bfloat16": True,
@@ -95,9 +93,11 @@ def create_cfg():
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
+        "initializer_scale": 1.0
         # 'W_O_init_scale':True,
     }
     # print('Old')
+    # accelerato(cfg)
     # print()
     cfg["n_heads"] = cfg["d_model"] // cfg["d_head"]
     cfg["d_mlp"] = 4 * cfg["d_model"]
@@ -515,9 +515,11 @@ class Attention(nn.Module):
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_v = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
-        self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
+        # [batch, head_index, query_pos, key_pos]
+        self.hook_attn_scores = HookPoint()
         self.hook_attn = HookPoint()  # [batch, head_index, query_pos, key_pos]
-        self.hook_result = HookPoint()  # [batch, head_index, head_index, d_model]
+        # [batch, head_index, head_index, d_model]
+        self.hook_result = HookPoint()
         if not cfg["use_pos_resid"]:
             self.hook_attn_input = HookPoint()
 
@@ -628,7 +630,7 @@ class MLP(nn.Module):
         elif self.cfg["act_fn"].lower() == "gelu_new":
             self.act_fn = gelu_new
         elif self.cfg["act_fn"].lower() == "solu":
-            self.act_fn = lambda x: F.softmax(x, dim=-1) * x
+            self.act_fn = lambda x: F.softmax(x.to(torch.float32), dim=-1) * x
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
@@ -699,7 +701,10 @@ class Transformer(HookedRootModule):
         self.cfg = cfg
         self.tokenizer = tokenizer
 
-        self.embed = Embed(self.cfg)
+        if self.cfg["factored_embed"]:
+            self.embed = FactoredEmbed(self.cfg)
+        else:
+            self.embed = Embed(self.cfg)
         self.hook_embed = HookPoint()  # [batch, pos, d_model]
 
         self.pos_embed = PosEmbed(self.cfg)
@@ -717,7 +722,10 @@ class Transformer(HookedRootModule):
             ]
         )
 
-        self.unembed = Unembed(self.cfg)
+        if self.cfg["factored_embed"]:
+            self.unembed = FactoredUnembed(self.cfg)
+        else:
+            self.unembed = Unembed(self.cfg)
 
         # Gives each module a parameter with its name (relative to this root module)
         # Needed for HookPoints to work
@@ -759,7 +767,17 @@ def init_tokenizer():
 
 
 def create_dataset(cfg):
-    tokenizer = init_tokenizer()
+
+    data = datasets.concatenate_datasets(
+        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)]
+    )
+    data = data.with_format("torch")
+    data.shuffle(seed=cfg["seed"])
+    print(data)
+    data_loader = DataLoader(data, num_workers=8, batch_size=cfg["batch_size"])
+    return data_loader
+
+    tokenizer = init_tokenizer(accelerator)
     seq_len = cfg["n_ctx"]
 
     def tokenize(examples):
@@ -825,7 +843,7 @@ def create_dataset(cfg):
             dataset = dataset.with_format(type="torch")
             print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
-            dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
+            # dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
             print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
             train_data_loader = DataLoader(
@@ -892,6 +910,7 @@ def create_dataset(cfg):
                     break
     return train_data_loader
 
+
 class SaveSchedule:
     def __init__(self, max_tokens, tokens_per_step, schedule=None):
         if schedule is None:
@@ -929,13 +948,16 @@ class SaveSchedule:
 
 
 def main(mixed_precision="bf16", seed: int = 42):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    # torch.manual_seed(seed)
+    set_seed(seed)
+
+    # accelerator = Accelerator(gradient_accumulation_steps=1)
 
     cfg = create_cfg()
+    # assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
 
     data_iter = create_dataset(cfg)
+
+    print("initialized accelerator")
 
     model_name = f'SoLU_{cfg["n_layers"]}L_v{cfg["version"]}'
 
@@ -948,8 +970,13 @@ def main(mixed_precision="bf16", seed: int = 42):
     tokenizer = init_tokenizer()
     # device = "cuda"
 
+    # if cfg["attn_only"]:
+    #     model = AttnOnlyTransformer(cfg, tokenizer)
+    # else:
     model = Transformer(cfg, tokenizer)
-
+    for name, param in model.named_parameters():
+        if "W_" in name:
+            param.data *= cfg["initializer_scale"]
     model.to("cuda")
     if cfg["use_bfloat16"]:
         model.to(torch.bfloat16)
@@ -997,6 +1024,9 @@ def main(mixed_precision="bf16", seed: int = 42):
             cfg["tokens_per_step"],
         )
 
+    # model, optimizer, data_iter = accelerator.prepare(
+    #     model, optimizer, data_iter)
+
     print(cfg)
     # DataLoader(full_owt_test['text'], batch_size=cfg['batch_size'], shuffle=False, pin_memory=False)
     print("Training begins!")
@@ -1004,37 +1034,52 @@ def main(mixed_precision="bf16", seed: int = 42):
     loss_ewmas = []
     step = 0
     start_time = time.time()
-    loss_ewma = 9
+    # loss_ewma = 9
+    loss_ewma = torch.tensor(9.0, device="cuda")
     # loss_beta = 0.95
     total_tokens = 0
-    running_loss = 0
+    running_loss = torch.tensor(0.0, device="cuda")
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
+    print("Starting epoch", epoch)
     parallel_model = torch.nn.DataParallel(
         model, device_ids=list(range(torch.cuda.device_count()))
     )
+
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
+        # with accelerator.accumulate(model):
         batch = batch["text"]
         if cfg["debug"] and epoch == 0 and c < 3 and True:
             print(batch[0])
             print(tokenizer.decode(batch[0]))
+        if c < 3:
+            print("Batch size:", batch.shape)
         # batch = batch.cuda()
         loss = parallel_model(batch).mean()
-        # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         # loss = loss / accelerator.num_processes
+        # accelerator.backward(loss)
         loss.backward()
+        # if c < 3:
+        #     print(batch.shape)
+        #     batch = accelerator.gather(batch)
+        #     print(batch.shape)
+        # print(batch[..., 1])
+        # break
 
-        running_loss += loss.item()
-        batch_tokens = torch.tensor(batch.numel(), device="cuda")
+        # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+        # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
+        running_loss += loss.detach() * cfg["batches_per_step"]
+        batch_tokens = torch.tensor(batch.numel(), device="cuda")  # *8
         # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+
         total_tokens += batch_tokens.item()
         if (c + 1) % cfg["batches_per_step"] == 0:
-            nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
             optimizer.step()
             if cfg["lr_schedule"] is not None:
                 scheduler.step()
-                if True:
+                if True and step % 100 == 0:
                     wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
             optimizer.zero_grad()
             if True and schedule.step() and cfg["use_checkpoint_schedule"]:
@@ -1056,21 +1101,24 @@ def main(mixed_precision="bf16", seed: int = 42):
                         )
                     wandb.save(f"{model_name}_{step:0>6}.pth")
             running_loss = running_loss / cfg["batches_per_step"]
-            losses.append(running_loss)
+            # losses.append(running_loss)
 
             loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
                 1 - cfg["train_loss_ewma_beta"]
             )
-            loss_ewmas.append(loss_ewma)
-            if True:
+            # loss_ewmas.append(loss_ewma)
+            if True and step % 100 == 0:
+                log_dict = {
+                    "loss": running_loss.item() * cfg["batches_per_step"],
+                    "loss_ewma": loss_ewma,
+                    "elapsed": time.time() - start_time,
+                    "total_tokens": total_tokens,
+                    "c": c,
+                }
+                print("Step:", step)
+                print("Logging:", log_dict)
                 wandb.log(
-                    {
-                        "loss": running_loss,
-                        "loss_ewma": loss_ewma,
-                        "elapsed": time.time() - start_time,
-                        "total_tokens": total_tokens,
-                        "c": c,
-                    },
+                    log_dict,
                     step=step,
                 )
             # print("Just logged")
@@ -1084,17 +1132,18 @@ def main(mixed_precision="bf16", seed: int = 42):
             #     }
             # )
             running_loss = 0
-            if step % 30 == 0:
-                print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
+            # if step % 30 == 0:
+            #     print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
             step += 1
-            if step >= cfg["max_steps"]:
-                break
+            # if step >= cfg["max_steps"]:
+            #     break
             if total_tokens > cfg["max_tokens"]:
                 break
-        if c <= 12 and epoch == 0:
-            cuda_memory()
-            print("Early iteration complete!", c, time.time() - prev_time)
-            prev_time = time.time()
+        # if c <= 12 and epoch == 0:
+        #     cuda_memory()
+        #     print("Early iteration complete!",
+        #                         c, time.time() - prev_time)
+        #     prev_time = time.time()
         del loss
         # print(batch.shape, logits.shape, running_loss, loss, step, total_tokens)
         # if not cfg['debug_overfit']:

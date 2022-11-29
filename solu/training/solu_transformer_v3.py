@@ -1,3 +1,6 @@
+# %%
+print(123)
+# %%
 # -*- coding: utf-8 -*-
 """SoLU Transformer v3.ipynb
 
@@ -79,11 +82,11 @@ cfg = {
     'n_layers':12,
     'lr':6e-4,
     'batch_size':13 * torch.cuda.device_count(),
-    'batches_per_step':1,
+    'batches_per_step':2,
     'seed':12345,
     # 'checkpoint_every_tokens':5*10**7,
     'use_checkpoint_schedule':False,
-    'debug':False,
+    'debug':True,
     'debug_batch':False,
     'debug_overfit':False,
     'normalization':'LN', # 'LN' 'RMS' or None
@@ -937,9 +940,10 @@ torch.save(cfg, model_name+"_config.pth")
 wandb.save(model_name+"_config.pth")
 
 torch.save(cfg, f"{model_name}_config.pth")
-torch.save(model.state_dict(), f"{model_name}_init.pth")
-wandb.save(model_name+"_init.pth")
-
+if not cfg['debug']:
+    torch.save(model.state_dict(), f"{model_name}_init.pth")
+    wandb.save(model_name+"_init.pth")
+# %%
 pprint(cfg)
 # DataLoader(full_owt_test['text'], batch_size=cfg['batch_size'], shuffle=False, pin_memory=False)
 print('Training begins!')

@@ -1,0 +1,10 @@
+einops
+numpy
+torch
+datasets
+transformers
+tqdm
+pandas
+datasets
+wandb
+fancy_einsum

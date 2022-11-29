@@ -205,17 +205,16 @@ print("Finish")
 #     return tokenizer.batch_decode(tokenizer.encode("<|endoftext|>"+text))
 
 
-
 # for neuron_index in range(1):
 #     print(neuron_index)
 #     v = torch.zeros_like(cache['blocks.0.mlp.hook_pre'][:, neuron_index])
 #     v[0]=1.
 #     vis_activations(example_text, v, name=f'Pre Activation for neuron {neuron_index}')
 #     vis_activations(example_text, cache['blocks.0.mlp.hook_pre'][:, neuron_index], name=f'Pre Activation for neuron {neuron_index}')
-    
-    # vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post Activation for neuron {neuron_index}')
-    # vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post LN for neuron {neuron_index}')
-    
+
+# vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post Activation for neuron {neuron_index}')
+# vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post LN for neuron {neuron_index}')
+
 
 # logits, loss = model(example_text)
 # # %%
@@ -244,13 +243,10 @@ print("Finish")
 # train_data_loader = DataLoader(dataset, batch_size=cfg['batch_size'])
 
 
-
 # print('Loaded!', time.time()-start_time)
 # start_time = time.time()
 # dataset = dataset.map(tokenize, batched=True, num_proc=20)
 # print('dataset.map', time.time()-start_time)
-
-
 
 
 # # %%
@@ -265,12 +261,12 @@ print("Finish")
 # tokens = dataset[:80]['text'].cuda()
 # tokens2 = dataset[80:160]['text'].cuda()
 # modelfp32 = Transformer(cfg, tokenizer).cuda()
-# modelfp32.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
+# modelfp32.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
 # modelbf16 = Transformer(cfg, tokenizer).cuda()
-# modelbf16.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
+# modelbf16.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
 # modelbf16.to(torch.bfloat16)
 # modelfp16 = Transformer(cfg, tokenizer).cuda()
-# modelfp16.load_state_dict(torch.load('/workspace/solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
+# modelfp16.load_state_dict(torch.load(Path.home()/'solu_project/solu_checkpoints/SoLU_1L_v11_final.pth'))
 # modelfp16.to(torch.float16)
 # # %%
 # from torch.profiler import profile, record_function, ProfilerActivity
@@ -285,5 +281,5 @@ print("Finish")
 #         with record_function('fp16'):
 #             loss1 = modelfp16(tokens, return_type='loss').detach()
 #             loss2 = modelfp16(tokens2, return_type='loss').detach()
-    
+
 # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))

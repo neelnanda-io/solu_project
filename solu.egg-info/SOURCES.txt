@@ -1,0 +1,17 @@
+README.md
+setup.py
+solu/__init__.py
+solu/download_data_to_disk copy.py
+solu/download_data_to_disk.py
+solu/download_data_to_disk_temp_v2.py
+solu/make_pile_10k.py
+solu/move_folders_and_upload.py
+solu/old_transformer.py
+solu/old_transformer_config.py
+solu/transformer.py
+solu/utils.py
+solu.egg-info/PKG-INFO
+solu.egg-info/SOURCES.txt
+solu.egg-info/dependency_links.txt
+solu.egg-info/requires.txt
+solu.egg-info/top_level.txt

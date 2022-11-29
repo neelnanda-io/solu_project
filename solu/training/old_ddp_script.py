@@ -1,10 +1,30 @@
+from pprint import pprint
+from accelerate import notebook_launcher
+from accelerate.utils import set_seed, write_basic_config
+from accelerate import Accelerator
+import accelerate
+import wandb
+import datasets
+from transformers import AutoTokenizer
+import json
+from datasets import load_dataset
+import transformers
+from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+import itertools
+import copy
+import collections
+import gc
+import pandas as pd
+from functools import *
+from torch.utils.data import DataLoader
+import plotly.graph_objects as go
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.nn import DataParallel
+
 # from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 import einops
@@ -23,54 +43,47 @@ import plotly.express as px
 import plotly.io as pio
 
 pio.renderers.default = "colab"
-import plotly.graph_objects as go
 
-from torch.utils.data import DataLoader
-
-from functools import *
-import pandas as pd
-import gc
-import collections
-import copy
 
 # import comet_ml
-import itertools
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-import transformers
-from datasets import load_dataset
-import json
-from transformers import AutoTokenizer
-import transformers
-import datasets
-import time
-import wandb
-
-import os
-
-from pprint import pprint
 
 
-def create_cfg():
+def amp_einsum(einsum_str, mat1, mat2, use_bfloat16=True):
+    # return torch.einsum(einsum_str, mat1, mat2)
+    # return torch.einsum(einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)).to(torch.float32)
+    if use_bfloat16:
+        return torch.einsum(
+            einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)
+        )
+    else:
+        return torch.einsum(einsum_str, mat1, mat2)
+
+
+NUM_GRAD_ACC_STEPS = 1
+NUM_DEVICES = 8
+
+
+def create_cfg(accelerator):
     cfg = {
         "d_model": 512,
         "n_layers": 4,
-        "lr": 1e-3,
-        "batch_size": 36 * 8,
-        "batches_per_step": 1,
-        "seed": 987422,
+        "lr": 7e-4,
+        "batch_size": 32,
+        "batches_per_step": NUM_GRAD_ACC_STEPS,
+        "seed": 90312,
         # 'checkpoint_every_tokens':5*10**7,
-        "use_checkpoint_schedule": True,
+        "use_checkpoint_schedule": False,
         "debug": False,
         "debug_batch": False,
         "debug_overfit": False,
         "normalization": "LN",  # 'LN' 'RMS' or None
         # "max_tokens": 15 * 10 ** 9,
         "max_tokens": 22 * 10**9,
-        "version": 37,
+        "version": 32,
         "use_float16": False,
         "use_bfloat16": False,
         "save_checkpoints_to_bfloat16": True,
-        "use_bfloat16_matmul": True,
+        "use_bfloat16_matmul": False,
         "right_multiply_matrices": True,
         # 'n_heads':8,
         "d_head": 64,
@@ -78,13 +91,13 @@ def create_cfg():
         "d_vocab": 50278,
         # 'factor_size':256,
         "betas": (0.9, 0.99),
-        "weight_decay": 0.01,
+        "weight_decay": 0.1,
         "dataset_name": "the_pile",
         # "dataset_name": "wikipedia",
         # "dataset_subset_name": "20220301.en",
         "grad_norm_clip": 1.0,
         "use_attn_result": False,
-        "n_devices": torch.cuda.device_count(),
+        "n_devices": NUM_DEVICES,
         "act_fn": "SoLU",
         "use_pos_resid": True,
         "attn_only": False,
@@ -95,36 +108,40 @@ def create_cfg():
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
+        "use_ET": False,
+        "initializer_scale": 1.0,
         # 'W_O_init_scale':True,
     }
-    # print('Old')
+    # accelerator.print('Old')
+    # accelerato(cfg)
     # print()
     cfg["n_heads"] = cfg["d_model"] // cfg["d_head"]
     cfg["d_mlp"] = 4 * cfg["d_model"]
     cfg["tokens_per_step"] = cfg["batch_size"] * cfg["n_ctx"] * cfg["batches_per_step"]
-    cfg["max_steps"] = cfg["max_tokens"] // cfg["tokens_per_step"]
+    cfg["max_steps"] = cfg["max_tokens"] // cfg["tokens_per_step"] * NUM_DEVICES
     cfg["warmup_steps"] = cfg["warmup_tokens"] // cfg["tokens_per_step"]
     # cfg['checkpoint_every'] = cfg['checkpoint_every_tokens']//cfg['tokens_per_step']
     if cfg["debug"] and not cfg["debug_overfit"]:
-        print("Old max steps:", cfg["max_steps"])
-        cfg["max_steps"] = 20
+        # print("Old max steps:", cfg["max_steps"])
+        cfg["max_steps"] = 25
     cfg["n_params"] = 12 * cfg["n_layers"] * cfg["d_model"] ** 2
     # cfg['warmup_steps']=cfg['warmup_tokens']//cfg['tokens_per_step']
     # pprint(cfg)
     torch.manual_seed(cfg["seed"])
     np.random.seed(cfg["seed"])
     random.seed(cfg["seed"])
-    print(f"Num params: {12*cfg['n_layers']*cfg['d_model']**2:,}")
+    accelerator.print(f"Num params: {12*cfg['n_layers']*cfg['d_model']**2:,}")
     return cfg
 
 
 def cuda_memory():
-    print(
-        [
-            torch.cuda.memory_allocated(f"cuda:{i}") / 1e9
-            for i in range(torch.cuda.device_count())
-        ]
-    )
+    pass
+    # print(
+    #     [
+    #         torch.cuda.memory_allocated(f"cuda:{i}") / 1e9
+    #         for i in range(torch.cuda.device_count())
+    #     ]
+    # )
 
 
 def get_corner(tensor, n=2):
@@ -162,7 +179,7 @@ def to_numpy(tensor, flat=False):
 def save_to_bfloat16(model, file_name):
     sd = model.state_dict()
     torch.save({k: v.to(torch.bfloat16) for k, v in sd.items()}, file_name)
-    print("Saved model as bfloat16 to", file_name)
+    # print("Saved model as bfloat16 to", file_name)
 
 
 # save_to_bfloat16(model, 'SoLU_3L_testing.pth')
@@ -332,15 +349,15 @@ def loss_fn(logits, batch):
     return -pred_log_probs.mean()
 
 
-def amp_einsum(einsum_str, mat1, mat2, use_bfloat16=True):
-    # return torch.einsum(einsum_str, mat1, mat2)
-    # return torch.einsum(einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)).to(torch.float32)
-    if use_bfloat16:
-        return torch.einsum(
-            einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)
-        )
-    else:
-        return torch.einsum(einsum_str, mat1, mat2)
+# def amp_einsum(einsum_str, mat1, mat2, use_bfloat16=True):
+#     # return amp_einsum(einsum_str, mat1, mat2)
+#     # return amp_einsum(einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)).to(torch.float32)
+#     if use_bfloat16:
+#         return amp_einsum(
+#             einsum_str, mat1.to(torch.bfloat16), mat2.to(torch.bfloat16)
+#         )
+#     else:
+#         return amp_einsum(einsum_str, mat1, mat2)
 
 
 # Define network architecture
@@ -515,9 +532,11 @@ class Attention(nn.Module):
         self.hook_q = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_v = HookPoint()  # [batch, pos, head_index, d_head]
         self.hook_z = HookPoint()  # [batch, pos, head_index, d_head]
-        self.hook_attn_scores = HookPoint()  # [batch, head_index, query_pos, key_pos]
+        # [batch, head_index, query_pos, key_pos]
+        self.hook_attn_scores = HookPoint()
         self.hook_attn = HookPoint()  # [batch, head_index, query_pos, key_pos]
-        self.hook_result = HookPoint()  # [batch, head_index, head_index, d_model]
+        # [batch, head_index, head_index, d_model]
+        self.hook_result = HookPoint()
         if not cfg["use_pos_resid"]:
             self.hook_attn_input = HookPoint()
 
@@ -628,7 +647,7 @@ class MLP(nn.Module):
         elif self.cfg["act_fn"].lower() == "gelu_new":
             self.act_fn = gelu_new
         elif self.cfg["act_fn"].lower() == "solu":
-            self.act_fn = lambda x: F.softmax(x, dim=-1) * x
+            self.act_fn = lambda x: F.softmax(x.to(torch.float32), dim=-1) * x
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
@@ -699,7 +718,10 @@ class Transformer(HookedRootModule):
         self.cfg = cfg
         self.tokenizer = tokenizer
 
-        self.embed = Embed(self.cfg)
+        if self.cfg["factored_embed"]:
+            self.embed = FactoredEmbed(self.cfg)
+        else:
+            self.embed = Embed(self.cfg)
         self.hook_embed = HookPoint()  # [batch, pos, d_model]
 
         self.pos_embed = PosEmbed(self.cfg)
@@ -717,7 +739,10 @@ class Transformer(HookedRootModule):
             ]
         )
 
-        self.unembed = Unembed(self.cfg)
+        if self.cfg["factored_embed"]:
+            self.unembed = FactoredUnembed(self.cfg)
+        else:
+            self.unembed = Unembed(self.cfg)
 
         # Gives each module a parameter with its name (relative to this root module)
         # Needed for HookPoints to work
@@ -750,16 +775,16 @@ class Transformer(HookedRootModule):
         return self.tokenizer(text, return_tensors="pt")["input_ids"]
 
 
-def init_tokenizer():
+def init_tokenizer(accelerator):
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
     pad_token = "<PAD>"
     tokenizer.add_special_tokens({"pad_token": pad_token})
-    print(tokenizer)
+    accelerator.print(tokenizer)
     return tokenizer
 
 
-def create_dataset(cfg):
-    tokenizer = init_tokenizer()
+def create_dataset(cfg, accelerator):
+    tokenizer = init_tokenizer(accelerator)
     seq_len = cfg["n_ctx"]
 
     def tokenize(examples):
@@ -797,12 +822,12 @@ def create_dataset(cfg):
         if cfg["dataset_name"] == "the_pile":
             if cfg["shuffled_data"]:
                 randperm = np.random.permutation(28)
-                print("Permutation of PILE URLs", randperm)
+                accelerator.print("Permutation of PILE URLs", randperm)
                 pile_urls = [
                     f"https://the-eye.eu/public/AI/pile/train/{i:0>2}.jsonl.zst"
                     for i in randperm
                 ]
-                print("Pile URLs: ", pile_urls)
+                accelerator.print("Pile URLs: ", pile_urls)
                 dataset = load_dataset(
                     "json", data_files=pile_urls, streaming=True, split="train"
                 )
@@ -810,28 +835,30 @@ def create_dataset(cfg):
                 dataset = load_dataset(
                     cfg["dataset_name"], streaming=True, split="train"
                 )
-            print("Loaded!", time.time() - start_time)
+            accelerator.print("Loaded!", time.time() - start_time)
             start_time = time.time()
             try:
                 dataset = dataset.remove_columns("meta")
             except:
-                print("Meta not in dataset")
+                accelerator.print("Meta not in dataset")
 
-            print("Loaded!", time.time() - start_time)
+            accelerator.print("Loaded!", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.map(tokenize, batched=True)
-            print("dataset.map", time.time() - start_time)
+            accelerator.print("dataset.map", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.with_format(type="torch")
-            print("dataset.set_format", time.time() - start_time)
+            accelerator.print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
-            dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
-            print("dataset.shuffle", time.time() - start_time)
+            # dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
+            accelerator.print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
             train_data_loader = DataLoader(
                 dataset, batch_size=cfg["batch_size"], num_workers=3
             )
-            print("train_data_loader =", time.time() - start_time)
+            accelerator.print("train_data_loader =", time.time() - start_time)
+            if accelerator.is_main_process:
+                print(next(iter(train_data_loader))["text"][:4, :4])
         elif cfg["dataset_name"] == "wikipedia":
             dataset = load_dataset(
                 cfg["dataset_name"],
@@ -842,18 +869,18 @@ def create_dataset(cfg):
             try:
                 dataset = dataset.remove_columns(["id", "url", "title"])
             except:
-                print("Id url or title not in dataset")
-            print("Loaded!", time.time() - start_time)
+                accelerator.print("Id url or title not in dataset")
+            accelerator.print("Loaded!", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.map(tokenize, batched=True, num_proc=16)
-            print("dataset.map", time.time() - start_time)
+            accelerator.print("dataset.map", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.with_format(type="torch")
-            print("dataset.set_format", time.time() - start_time)
+            accelerator.print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.shuffle(seed=cfg["seed"])
             train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
-            print("train_data_loader =", time.time() - start_time)
+            accelerator.print("train_data_loader =", time.time() - start_time)
         elif cfg["dataset_name"] == "c4":
             dataset = load_dataset("c4", "en", streaming=True, split="train")
             dataset = dataset.remove_columns(["url", "timestamp"])
@@ -884,13 +911,14 @@ def create_dataset(cfg):
             start_time = time.time()
             for c, i in tqdm.tqdm(enumerate(train_data_loader)):
                 if c == 0:
-                    print("Loaded Initial stream!")
-                    print(c, time.time() - start_time)
+                    accelerator.print("Loaded Initial stream!")
+                    accelerator.print(c, time.time() - start_time)
                     start_time = time.time()
                 elif c == 1:
-                    print("Time for next batch:", time.time() - start_time)
+                    accelerator.print("Time for next batch:", time.time() - start_time)
                     break
     return train_data_loader
+
 
 class SaveSchedule:
     def __init__(self, max_tokens, tokens_per_step, schedule=None):
@@ -929,28 +957,114 @@ class SaveSchedule:
 
 
 def main(mixed_precision="bf16", seed: int = 42):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    # torch.manual_seed(seed)
+    set_seed(seed)
 
-    cfg = create_cfg()
+    accelerator = Accelerator(
+        mixed_precision=mixed_precision, gradient_accumulation_steps=NUM_GRAD_ACC_STEPS
+    )
 
-    data_iter = create_dataset(cfg)
+    cfg = create_cfg(accelerator)
+    assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
+
+    data_iter = create_dataset(cfg, accelerator)
+
+    accelerator.print("initialized accelerator")
 
     model_name = f'SoLU_{cfg["n_layers"]}L_v{cfg["version"]}'
 
-    if True:
+    if accelerator.is_main_process:
         wandb.init(project="solu", entity="mechanistic-interpretability", config=cfg)
 
         torch.save(cfg, model_name + "_config.pth")
         wandb.save(model_name + "_config.pth")
 
-    tokenizer = init_tokenizer()
-    # device = "cuda"
+    tokenizer = init_tokenizer(accelerator)
+    # device = accelerator.device
 
-    model = Transformer(cfg, tokenizer)
+    if cfg["use_ET"]:
+        from easy_transformer.EasyTransformerConfig import EasyTransformerConfig
+        from easy_transformer import EasyTransformer
+        from rich import print as rprint
+        from dataclasses import dataclass
 
-    model.to("cuda")
+        # %%
+        from IPython import get_ipython
+
+        try:
+            ipython = get_ipython()
+            # Code to automatically update the EasyTransformer code as its edited without restarting the kernel
+            ipython.magic("load_ext autoreload")
+            ipython.magic("autoreload 2")
+            import plotly.io as pio
+
+            pio.renderers.default = "vscode"
+            IS_IPYTHON = True
+        except:
+            IS_IPYTHON = False
+
+        # %%
+
+        @dataclass
+        class TrainingConfig:
+            apply_anthropic_hyper_params: bool
+            #     lr: float
+            #     batch_size: int
+
+            #     seed: 12345
+            #     batches_per_step: int = 1
+
+            model_cfg: EasyTransformerConfig = None
+
+            @classmethod
+            def from_dict(cls, **cfg_dict):
+                model_config_keys = EasyTransformerConfig.__dataclass_fields__.keys()
+
+                model_cfg_dict = {
+                    k: v for k, v in cfg_dict.items() if k in model_config_keys
+                }
+                training_cfg_dict = {
+                    k: v for k, v in cfg_dict.items() if k not in model_config_keys
+                }
+
+                if training_cfg_dict["apply_anthropic_hyper_params"]:
+                    n_layers = model_cfg_dict["n_layers"]
+                    model_cfg_dict["d_model"] = n_layers * 128
+                    model_cfg_dict["d_mlp"] = 4 * model_cfg_dict["d_model"]
+                    model_cfg_dict["d_head"] = 64
+                    assert (
+                        model_cfg_dict["d_model"] % model_cfg_dict["d_head"] == 0
+                    ), f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
+                    model_cfg_dict["n_heads"] = (
+                        model_cfg_dict["d_model"] // model_cfg_dict["d_head"]
+                    )
+
+                model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
+
+                # rprint(training_cfg_dict)
+                # rprint(model_cfg_dict)
+                return cls(model_cfg=model_cfg, **training_cfg_dict)
+
+        config = TrainingConfig.from_dict(
+            n_layers=4,
+            apply_anthropic_hyper_params=True,
+            act_fn="solu_ln",
+            tokenizer_name="EleutherAI/gpt-neox-20b",
+            #     device='cpu',
+            #     lr=1e-4,
+            n_ctx=1024,
+        )
+        # rprint(config)
+
+        # %%
+        model = EasyTransformer.from_config(config.model_cfg)
+        accelerator.print(model.cfg)
+        # rprint(model)
+    else:
+        model = Transformer(cfg, tokenizer)
+    for name, param in model.named_parameters():
+        if "W_" in name:
+            param.data *= cfg["initializer_scale"]
+    model.to(accelerator.device)
     if cfg["use_bfloat16"]:
         model.to(torch.bfloat16)
     elif cfg["use_float16"]:
@@ -977,8 +1091,8 @@ def main(mixed_precision="bf16", seed: int = 42):
 
         param_groups = {"decay": [], "no_decay": []}
         for name, param in model.named_parameters():
-            print(name)
-            print(param.dtype)
+            accelerator.print(name)
+            accelerator.print(param.dtype)
             if "W_" in name and name not in ["W_E", "W_U"]:
                 param_groups["decay"].append(param)
             else:
@@ -988,121 +1102,179 @@ def main(mixed_precision="bf16", seed: int = 42):
             {"params": param_groups["no_decay"], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=cfg["lr"])
-        print(optimizer)
+        accelerator.print(optimizer)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
 
-    if True:
+    if accelerator.is_main_process:
         schedule = SaveSchedule(
             cfg["max_tokens"],
             cfg["tokens_per_step"],
         )
 
-    print(cfg)
+    model, optimizer, data_iter = accelerator.prepare(model, optimizer, data_iter)
+
+    accelerator.print(cfg)
     # DataLoader(full_owt_test['text'], batch_size=cfg['batch_size'], shuffle=False, pin_memory=False)
-    print("Training begins!")
+    accelerator.print("Training begins!")
     losses = []
     loss_ewmas = []
     step = 0
     start_time = time.time()
-    loss_ewma = 9
+    # loss_ewma = 9
+    loss_ewma = torch.tensor(9.0, device=accelerator.device)
     # loss_beta = 0.95
     total_tokens = 0
-    running_loss = 0
+    # running_loss = 0
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
-    parallel_model = torch.nn.DataParallel(
-        model, device_ids=list(range(torch.cuda.device_count()))
-    )
+    running_loss = torch.tensor(0.0, requires_grad=False).to(accelerator.device)
+
+    def error_handling_data_loader(data_loader):
+        while True:
+            try:
+                yield next(data_loader)
+            except KeyboardInterrupt:
+                print("Keyboard interrupt")
+                raise KeyboardInterrupt
+            except Exception as e:
+                print(e)
+                time.sleep(1)
+                continue
+
+    data_iter = error_handling_data_loader(iter(data_iter))
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
-        batch = batch["text"]
-        if cfg["debug"] and epoch == 0 and c < 3 and True:
-            print(batch[0])
-            print(tokenizer.decode(batch[0]))
-        # batch = batch.cuda()
-        loss = parallel_model(batch).mean()
-        # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-        # loss = loss / accelerator.num_processes
-        loss.backward()
+        with accelerator.accumulate(model):
+            batch = batch["text"]
+            if c <= 3:
+                accelerator.print(
+                    accelerator.is_main_process, "Batch shape:", batch.shape
+                )
 
-        running_loss += loss.item()
-        batch_tokens = torch.tensor(batch.numel(), device="cuda")
-        # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
-        total_tokens += batch_tokens.item()
-        if (c + 1) % cfg["batches_per_step"] == 0:
-            nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
-            optimizer.step()
-            if cfg["lr_schedule"] is not None:
+            # batch = batch.cuda()
+            with accelerator.autocast():
+                if cfg["use_ET"]:
+                    loss = model(batch, return_type="loss")
+                else:
+                    loss = model(batch)
+
+            # loss = loss / accelerator.num_processes
+            accelerator.backward(loss)
+            if c < 3:
+                print(batch.shape)
+                batch = accelerator.gather(batch)
+                print(batch.shape)
+            # print(batch[..., 1])
+            # break
+
+            # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+            # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
+            running_loss += loss.detach() * accelerator.gradient_accumulation_steps
+            batch_tokens = torch.tensor(batch.numel(), device=accelerator.device) * 8
+            # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+
+            running_loss += loss.detach()
+            # batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)
+            # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+            total_tokens += batch.numel() * cfg["n_devices"]
+            if (c + 1) % cfg["batches_per_step"] == 0:
+                accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
+                optimizer.step()
                 scheduler.step()
-                if True:
-                    wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
-            optimizer.zero_grad()
-            if True and schedule.step() and cfg["use_checkpoint_schedule"]:
-                print(
-                    f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
-                )
-                if not cfg["debug"]:
-                    if cfg["save_checkpoints_to_bfloat16"]:
-                        save_to_bfloat16(model, f"{model_name}_{step:0>6}.pth")
-                    else:
-                        torch.save(model.state_dict(), f"{model_name}_{step:0>6}.pth")
-                    torch.save(
-                        optimizer.state_dict(), f"{model_name}_opt_checkpoint.pth"
-                    )
-                    if cfg["lr_schedule"] is not None:
-                        torch.save(
-                            scheduler.state_dict(),
-                            f"{model_name}_scheduler_checkpoint.pth",
+                # if accelerator.is_main_process:
+                #     print("Step", step, "Scheduler:")
+                #     print(scheduler.state_dict())
+                # if step % 50 == 0:
+                #     print(step, (scheduler.get_last_lr()[0] - 1e-7)/(step+1))
+                if cfg["lr_schedule"] is not None:
+                    scheduler.step()
+                    if accelerator.is_main_process:
+                        wandb.log(
+                            {"scheduled_lr": scheduler.get_last_lr()[0]}, step=step
                         )
-                    wandb.save(f"{model_name}_{step:0>6}.pth")
-            running_loss = running_loss / cfg["batches_per_step"]
-            losses.append(running_loss)
+                optimizer.zero_grad()
+                if (
+                    accelerator.is_main_process
+                    and schedule.step()
+                    and cfg["use_checkpoint_schedule"]
+                ):
+                    accelerator.print(
+                        f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
+                    )
+                    if not cfg["debug"]:
+                        if cfg["save_checkpoints_to_bfloat16"]:
+                            save_to_bfloat16(model, f"{model_name}_{step:0>6}.pth")
+                        else:
+                            torch.save(
+                                model.state_dict(), f"{model_name}_{step:0>6}.pth"
+                            )
+                        torch.save(
+                            optimizer.state_dict(), f"{model_name}_opt_checkpoint.pth"
+                        )
+                        if cfg["lr_schedule"] is not None:
+                            torch.save(
+                                scheduler.state_dict(),
+                                f"{model_name}_scheduler_checkpoint.pth",
+                            )
+                        wandb.save(f"{model_name}_{step:0>6}.pth")
 
-            loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
-                1 - cfg["train_loss_ewma_beta"]
-            )
-            loss_ewmas.append(loss_ewma)
-            if True:
-                wandb.log(
-                    {
-                        "loss": running_loss,
-                        "loss_ewma": loss_ewma,
-                        "elapsed": time.time() - start_time,
-                        "total_tokens": total_tokens,
-                        "c": c,
-                    },
-                    step=step,
+                # dist.all_reduce(running_loss, op=dist.ReduceOp.SUM)
+                # running_loss /= accelerator.num_processes
+
+                # print(accelerator.local_process_index, running_loss)
+                # losses.append(running_loss)
+
+                loss_ewma = loss_ewma * cfg["train_loss_ewma_beta"] + running_loss * (
+                    1 - cfg["train_loss_ewma_beta"]
                 )
-            # print("Just logged")
-            # print(
-            #     {
-            #         "loss": loss.item(),
-            #         "loss_ewma": loss_ewma,
-            #         "elapsed": time.time() - start_time,
-            #         "total_tokens": total_tokens,
-            #         "c": c,
-            #     }
-            # )
-            running_loss = 0
-            if step % 30 == 0:
-                print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
-            step += 1
-            if step >= cfg["max_steps"]:
-                break
-            if total_tokens > cfg["max_tokens"]:
-                break
-        if c <= 12 and epoch == 0:
-            cuda_memory()
-            print("Early iteration complete!", c, time.time() - prev_time)
-            prev_time = time.time()
-        del loss
+                # loss_ewmas.append(loss_ewma)
+                if accelerator.is_main_process and step % 100 == 0:
+                    wandb.log(
+                        {
+                            "loss": running_loss.item(),
+                            "loss_ewma": loss_ewma.item(),
+                            "elapsed": time.time() - start_time,
+                            "total_tokens": total_tokens,
+                            "c": c,
+                        },
+                        step=step,
+                    )
+                # accelerator.print("Just logged")
+                # accelerator.print(
+                #     {
+                #         "loss": loss.item(),
+                #         "loss_ewma": loss_ewma,
+                #         "elapsed": time.time() - start_time,
+                #         "total_tokens": total_tokens,
+                #         "c": c,
+                #     }
+                # )
+                running_loss = (
+                    torch.tensor(0.0, requires_grad=False)
+                    .float()
+                    .to(accelerator.device)
+                )
+                # if step % 30 == 0:
+                #     accelerator.print(c, step, total_tokens, losses[-1], loss_ewmas[-1])
+                step += 1
+                # if step >= cfg["max_steps"]:
+                #     break
+                if total_tokens > cfg["max_tokens"]:
+                    break
+            if c <= 12 and epoch == 0:
+                # cuda_memory()
+                accelerator.print(
+                    "Early iteration complete!", c, time.time() - prev_time
+                )
+                prev_time = time.time()
+            del loss
         # print(batch.shape, logits.shape, running_loss, loss, step, total_tokens)
         # if not cfg['debug_overfit']:
         #     break
 
-    print(f"Finished training! Train Loss EWMA: {loss_ewma}")
+    accelerator.print(f"Finished training! Train Loss EWMA: {loss_ewma}")
 
-    if not cfg["debug"] and True:
+    if not cfg["debug"] and accelerator.is_main_process:
         torch.save(model.state_dict(), f"{model_name}_final.pth")
         wandb.save(f"{model_name}_final.pth")
         wandb.finish()
@@ -1110,3 +1282,5 @@ def main(mixed_precision="bf16", seed: int = 42):
 
 if __name__ == "__main__":
     main()
+
+# %%
