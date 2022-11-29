@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn import DataParallel
+
 # from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 import einops
@@ -65,7 +66,7 @@ def create_cfg():
         "debug_overfit": False,
         "normalization": "LN",  # 'LN' 'RMS' or None
         # "max_tokens": 15 * 10 ** 9,
-        "max_tokens": 22*10**9,
+        "max_tokens": 22 * 10**9,
         "version": 37,
         "use_float16": False,
         "use_bfloat16": False,
@@ -91,7 +92,7 @@ def create_cfg():
         "ln_eps": 1e-5,
         "lr_schedule": "cosine_warmup",
         # "warmup_tokens": 25 * 10 ** 7,
-        "warmup_tokens": 2*10**8,
+        "warmup_tokens": 2 * 10**8,
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
@@ -807,7 +808,9 @@ def create_dataset(cfg):
                     "json", data_files=pile_urls, streaming=True, split="train"
                 )
             else:
-                dataset = load_dataset(cfg["dataset_name"], streaming=True, split="train")
+                dataset = load_dataset(
+                    cfg["dataset_name"], streaming=True, split="train"
+                )
             print("Loaded!", time.time() - start_time)
             start_time = time.time()
             try:
@@ -826,10 +829,17 @@ def create_dataset(cfg):
             dataset = dataset.shuffle(seed=cfg["seed"], buffer_size=30000)
             print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
-            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"], num_workers=3)
+            train_data_loader = DataLoader(
+                dataset, batch_size=cfg["batch_size"], num_workers=3
+            )
             print("train_data_loader =", time.time() - start_time)
         elif cfg["dataset_name"] == "wikipedia":
-            dataset = load_dataset(cfg["dataset_name"], cfg["dataset_subset_name"], split="train", cache_dir="cache")
+            dataset = load_dataset(
+                cfg["dataset_name"],
+                cfg["dataset_subset_name"],
+                split="train",
+                cache_dir="cache",
+            )
             try:
                 dataset = dataset.remove_columns(["id", "url", "title"])
             except:
@@ -846,23 +856,23 @@ def create_dataset(cfg):
             train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
             print("train_data_loader =", time.time() - start_time)
         elif cfg["dataset_name"] == "c4":
-            dataset = load_dataset('c4', "en", streaming=True, split='train')
-            dataset = dataset.remove_columns(['url', 'timestamp'])
+            dataset = load_dataset("c4", "en", streaming=True, split="train")
+            dataset = dataset.remove_columns(["url", "timestamp"])
             dataset = dataset.map(tokenize, batched=True)
-            dataset = dataset.with_format(type='torch')
-            dataset = dataset.shuffle(seed=cfg['seed'])
-            train_data_loader = DataLoader(dataset, batch_size=cfg['batch_size'])
+            dataset = dataset.with_format(type="torch")
+            dataset = dataset.shuffle(seed=cfg["seed"])
+            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
         else:
             raise ValueError(f"Invalid Dataset Name: {cfg['dataset_name']}")
 
     else:
-        if cfg['dataset_name']=='c4':
-            dataset = load_dataset('c4', "en", streaming=True, split='train')
-            dataset = dataset.remove_columns(['url', 'timestamp'])
+        if cfg["dataset_name"] == "c4":
+            dataset = load_dataset("c4", "en", streaming=True, split="train")
+            dataset = dataset.remove_columns(["url", "timestamp"])
             dataset = dataset.map(tokenize, batched=True)
-            dataset = dataset.with_format(type='torch')
-            dataset = dataset.shuffle(seed=cfg['seed'])
-            train_data_loader = DataLoader(dataset, batch_size=cfg['batch_size'])
+            dataset = dataset.with_format(type="torch")
+            dataset = dataset.shuffle(seed=cfg["seed"])
+            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
         else:
             streaming_owt = load_dataset(
                 "stas/openwebtext-10k", split="train", cache_dir="cache"
@@ -882,6 +892,7 @@ def create_dataset(cfg):
                     print("Time for next batch:", time.time() - start_time)
                     break
     return train_data_loader
+
 
 class SaveSchedule:
     def __init__(self, max_tokens, tokens_per_step, schedule=None):
@@ -938,7 +949,6 @@ def main(mixed_precision="bf16", seed: int = 42):
 
     tokenizer = init_tokenizer()
     # device = "cuda"
-
 
     model = Transformer(cfg, tokenizer)
 
@@ -1003,8 +1013,9 @@ def main(mixed_precision="bf16", seed: int = 42):
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
-    parallel_model = torch.nn.DataParallel(model,
-                                           device_ids=list(range(torch.cuda.device_count())))
+    parallel_model = torch.nn.DataParallel(
+        model, device_ids=list(range(torch.cuda.device_count()))
+    )
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         batch = batch["text"]
         if cfg["debug"] and epoch == 0 and c < 3 and True:
@@ -1028,11 +1039,7 @@ def main(mixed_precision="bf16", seed: int = 42):
                 if True:
                     wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
             optimizer.zero_grad()
-            if (
-                True
-                and schedule.step()
-                and cfg["use_checkpoint_schedule"]
-            ):
+            if True and schedule.step() and cfg["use_checkpoint_schedule"]:
                 print(
                     f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
                 )

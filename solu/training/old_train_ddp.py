@@ -13,6 +13,7 @@ import argparse
 #! SoLU Imports
 from solu.old_transformer import Transformer
 from solu.utils import solu_get_prev_versions
+
 # %%
 # %%
 
@@ -21,29 +22,36 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("n_layers", type=int)
     for key, value in DEFAULT_CONFIG.items():
-        if key!="n_layers":
+        if key != "n_layers":
             parser.add_argument(f"--{key}", type=type(value), default=value)
-    
+
     if IN_IPYTHON:
         args = parser.parse_args(["1"])
     else:
         args = parser.parse_args()
-    
+
     cfg = create_config(**vars(args))
 
-    print(f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
-    for key in (cfg.keys()):
+    print(
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params"
+    )
+    for key in cfg.keys():
         print(f"{key}: {cfg[key]}")
-    print(f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
+    print(
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params"
+    )
+
+
 # %%
 #! Config
 
-CHECKPOINT_DIR = Path.home()/("solu_project/solu_checkpoints/")
+CHECKPOINT_DIR = Path.home() / ("solu_project/solu_checkpoints/")
 NUM_TRAIN_DATA_FILES = 1
-TRAIN_DATA_FILES = [Path.home()/f'data/pile_{i:0<2}.hf' for i in range(NUM_TRAIN_DATA_FILES)]
+TRAIN_DATA_FILES = [
+    Path.home() / f"data/pile_{i:0<2}.hf" for i in range(NUM_TRAIN_DATA_FILES)
+]
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--n_layers", type=int)
-
 
 
 # %%
@@ -68,6 +76,7 @@ def get_corner(tensor, n=2):
         # I never need tensors of rank > 6
         raise ValueError(f"Tensor of shape {tensor.shape} is too big")
 
+
 def to_numpy(tensor, flat=False):
     if (type(tensor) != torch.Tensor) and (
         type(tensor) != torch.nn.parameter.Parameter
@@ -78,10 +87,12 @@ def to_numpy(tensor, flat=False):
     else:
         return tensor.detach().cpu().numpy()
 
+
 def loss_fn(logits, batch):
     log_probs = F.log_softmax(logits[:, :-1], dim=-1)
     pred_log_probs = torch.gather(log_probs, -1, batch[:, 1:, None])[..., 0]
     return -pred_log_probs.mean()
+
 
 def init_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
@@ -89,25 +100,40 @@ def init_tokenizer():
     tokenizer.add_special_tokens({"pad_token": pad_token})
     return tokenizer
 
+
 #! Data
 
+
 def create_dataset(cfg):
-    data = datasets.concatenate_datasets([datasets.load_from_disk(file_name)
-        for file_name in TRAIN_DATA_FILES])
+    data = datasets.concatenate_datasets(
+        [datasets.load_from_disk(file_name) for file_name in TRAIN_DATA_FILES]
+    )
     print(data)
     data = data.with_format("torch")
-    data = data.shuffle(seed=cfg['seed'])
+    data = data.shuffle(seed=cfg["seed"])
 
-    loader = torch.utils.data.DataLoader(data, batch_size=cfg["batch_size"], shuffle=False, num_workers=8)
+    loader = torch.utils.data.DataLoader(
+        data, batch_size=cfg["batch_size"], shuffle=False, num_workers=8
+    )
     return loader
 
+
 #! Checkpointing
+
 
 class SaveSchedule:
     """
     Decides when to save the model, has a hard-coded schedule of 162 checkpoints, which can be (approx) scaled up or down in frequency with the `scale` parameter.
     """
-    def __init__(self, max_tokens, tokens_per_step, scale=1, custom_schedule=None, show_plot=False):
+
+    def __init__(
+        self,
+        max_tokens,
+        tokens_per_step,
+        scale=1,
+        custom_schedule=None,
+        show_plot=False,
+    ):
         self.scale = scale
         if custom_schedule is None:
             self.schedule = np.concatenate(
@@ -143,31 +169,47 @@ class SaveSchedule:
         else:
             self.counter += 1
             return False
-    
+
     def normalised_range(self, start, stop):
         stop = round(stop * self.scale)
         start = round(start * self.scale)
-        return np.arange(start, stop)/stop
+        return np.arange(start, stop) / stop
 
-schedule = SaveSchedule(cfg["max_tokens"], cfg["tokens_per_step"], scale=3.2, show_plot=True)
+
+schedule = SaveSchedule(
+    cfg["max_tokens"], cfg["tokens_per_step"], scale=3.2, show_plot=True
+)
 
 # %%
 #! Save Model
 def save_checkpoint(model, optimizer, scheduler, cfg, step, folder_name):
     if cfg["take_checkpoints"]:
         model_name = f"SoLU_{folder_name}_{step:0<6}.pth"
-        torch.save(optimizer.state_dict(), CHECKPOINT_DIR/folder_name/f"SoLU_{folder_name}_optimizer_checkpoint.pth")
-        torch.save(scheduler.state_dict(), CHECKPOINT_DIR/folder_name/f"SoLU_{folder_name}_scheduler_checkpoint.pth")
-        torch.save(model.state_dict(), CHECKPOINT_DIR/folder_name/model_name)
+        torch.save(
+            optimizer.state_dict(),
+            CHECKPOINT_DIR
+            / folder_name
+            / f"SoLU_{folder_name}_optimizer_checkpoint.pth",
+        )
+        torch.save(
+            scheduler.state_dict(),
+            CHECKPOINT_DIR
+            / folder_name
+            / f"SoLU_{folder_name}_scheduler_checkpoint.pth",
+        )
+        torch.save(model.state_dict(), CHECKPOINT_DIR / folder_name / model_name)
         print(f"Saved model to {model_name}")
-# %%
 
+
+# %%
 
 
 def old_main(mixed_precision="bf16", seed: int = 42):
     set_seed(seed)
 
-    accelerator = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=2)
+    accelerator = Accelerator(
+        mixed_precision=mixed_precision, gradient_accumulation_steps=2
+    )
 
     cfg = create_cfg()
     assert cfg["batches_per_step"] == accelerator.gradient_accumulation_steps
@@ -187,7 +229,7 @@ def old_main(mixed_precision="bf16", seed: int = 42):
     tokenizer = init_tokenizer(accelerator)
     # device = accelerator.device
 
-    if cfg['use_ET']:
+    if cfg["use_ET"]:
         from easy_transformer.EasyTransformerConfig import EasyTransformerConfig
         from easy_transformer import EasyTransformer
         from rich import print as rprint
@@ -195,29 +237,28 @@ def old_main(mixed_precision="bf16", seed: int = 42):
 
         # %%
         from IPython import get_ipython
+
         try:
             ipython = get_ipython()
             # Code to automatically update the EasyTransformer code as its edited without restarting the kernel
             ipython.magic("load_ext autoreload")
             ipython.magic("autoreload 2")
             import plotly.io as pio
+
             pio.renderers.default = "vscode"
             IS_IPYTHON = True
         except:
             IS_IPYTHON = False
 
-
         # %%
         @dataclass
         class TrainingConfig:
             apply_anthropic_hyper_params: bool
-        #     lr: float
-        #     batch_size: int
+            #     lr: float
+            #     batch_size: int
 
-        #     seed: 12345
-        #     batches_per_step: int = 1
-
-
+            #     seed: 12345
+            #     batches_per_step: int = 1
 
             model_cfg: EasyTransformerConfig = None
 
@@ -225,30 +266,38 @@ def old_main(mixed_precision="bf16", seed: int = 42):
             def from_dict(cls, **cfg_dict):
                 model_config_keys = EasyTransformerConfig.__dataclass_fields__.keys()
 
-                model_cfg_dict = {k:v for k, v in cfg_dict.items() if k in model_config_keys}
-                training_cfg_dict = {k:v for k, v in cfg_dict.items() if k not in model_config_keys}
+                model_cfg_dict = {
+                    k: v for k, v in cfg_dict.items() if k in model_config_keys
+                }
+                training_cfg_dict = {
+                    k: v for k, v in cfg_dict.items() if k not in model_config_keys
+                }
 
-                if training_cfg_dict['apply_anthropic_hyper_params']:
-                    n_layers = model_cfg_dict['n_layers']
-                    model_cfg_dict['d_model'] = n_layers * 128
-                    model_cfg_dict['d_mlp'] = 4 * model_cfg_dict['d_model']
-                    model_cfg_dict['d_head'] = 64
-                    assert model_cfg_dict['d_model'] % model_cfg_dict['d_head'] == 0, f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
-                    model_cfg_dict['n_heads'] = model_cfg_dict['d_model']//model_cfg_dict['d_head']
+                if training_cfg_dict["apply_anthropic_hyper_params"]:
+                    n_layers = model_cfg_dict["n_layers"]
+                    model_cfg_dict["d_model"] = n_layers * 128
+                    model_cfg_dict["d_mlp"] = 4 * model_cfg_dict["d_model"]
+                    model_cfg_dict["d_head"] = 64
+                    assert (
+                        model_cfg_dict["d_model"] % model_cfg_dict["d_head"] == 0
+                    ), f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
+                    model_cfg_dict["n_heads"] = (
+                        model_cfg_dict["d_model"] // model_cfg_dict["d_head"]
+                    )
 
                 model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
 
                 # rprint(training_cfg_dict)
                 # rprint(model_cfg_dict)
-                return cls(model_cfg = model_cfg, **training_cfg_dict)
+                return cls(model_cfg=model_cfg, **training_cfg_dict)
 
         config = TrainingConfig.from_dict(
-            n_layers = 4,
-            apply_anthropic_hyper_params = True,
-            act_fn='solu_ln',
-            tokenizer_name = "EleutherAI/gpt-neox-20b",
-        #     device='cpu',
-        #     lr=1e-4,
+            n_layers=4,
+            apply_anthropic_hyper_params=True,
+            act_fn="solu_ln",
+            tokenizer_name="EleutherAI/gpt-neox-20b",
+            #     device='cpu',
+            #     lr=1e-4,
             n_ctx=1024,
         )
         # rprint(config)
@@ -307,7 +356,9 @@ def old_main(mixed_precision="bf16", seed: int = 42):
             cfg["tokens_per_step"],
         )
 
-    model, optimizer, data_iter, scheduler = accelerator.prepare(model, optimizer, data_iter, scheduler)
+    model, optimizer, data_iter, scheduler = accelerator.prepare(
+        model, optimizer, data_iter, scheduler
+    )
 
     accelerator.print(cfg)
     # DataLoader(full_owt_test['text'], batch_size=cfg['batch_size'], shuffle=False, pin_memory=False)
@@ -323,17 +374,19 @@ def old_main(mixed_precision="bf16", seed: int = 42):
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
-    running_loss = torch.tensor(0., requires_grad=False).to(accelerator.device)
+    running_loss = torch.tensor(0.0, requires_grad=False).to(accelerator.device)
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         with accelerator.accumulate(model):
             batch = batch["text"]
-            if c<=3:
-                accelerator.print(accelerator.is_main_process, "Batch shape:", batch.shape)
-            
+            if c <= 3:
+                accelerator.print(
+                    accelerator.is_main_process, "Batch shape:", batch.shape
+                )
+
             # batch = batch.cuda()
             with accelerator.autocast():
-                if cfg['use_ET']:
-                    loss = model(batch, return_type='loss')
+                if cfg["use_ET"]:
+                    loss = model(batch, return_type="loss")
                 else:
                     loss = model(batch)
 
@@ -343,14 +396,16 @@ def old_main(mixed_precision="bf16", seed: int = 42):
             running_loss += loss.detach()
             # batch_tokens = torch.tensor(batch.numel(), device=accelerator.device)
             # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
-            total_tokens += batch.numel()*cfg["n_devices"]
+            total_tokens += batch.numel() * cfg["n_devices"]
             if (c + 1) % cfg["batches_per_step"] == 0:
                 accelerator.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
                 optimizer.step()
                 if cfg["lr_schedule"] is not None:
                     scheduler.step()
                     if accelerator.is_main_process:
-                        wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
+                        wandb.log(
+                            {"scheduled_lr": scheduler.get_last_lr()[0]}, step=step
+                        )
                 optimizer.zero_grad()
                 if (
                     accelerator.is_main_process
@@ -364,7 +419,9 @@ def old_main(mixed_precision="bf16", seed: int = 42):
                         if cfg["save_checkpoints_to_bfloat16"]:
                             save_to_bfloat16(model, f"{model_name}_{step:0>6}.pth")
                         else:
-                            torch.save(model.state_dict(), f"{model_name}_{step:0>6}.pth")
+                            torch.save(
+                                model.state_dict(), f"{model_name}_{step:0>6}.pth"
+                            )
                         torch.save(
                             optimizer.state_dict(), f"{model_name}_opt_checkpoint.pth"
                         )
@@ -374,7 +431,7 @@ def old_main(mixed_precision="bf16", seed: int = 42):
                                 f"{model_name}_scheduler_checkpoint.pth",
                             )
                         wandb.save(f"{model_name}_{step:0>6}.pth")
-                
+
                 # dist.all_reduce(running_loss, op=dist.ReduceOp.SUM)
                 # running_loss /= accelerator.num_processes
                 # print(accelerator.local_process_index, running_loss)
@@ -415,7 +472,9 @@ def old_main(mixed_precision="bf16", seed: int = 42):
                     break
             if c <= 12 and epoch == 0:
                 # cuda_memory()
-                accelerator.print("Early iteration complete!", c, time.time() - prev_time)
+                accelerator.print(
+                    "Early iteration complete!", c, time.time() - prev_time
+                )
                 prev_time = time.time()
             del loss
         # print(batch.shape, logits.shape, running_loss, loss, step, total_tokens)

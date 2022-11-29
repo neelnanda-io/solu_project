@@ -21,6 +21,7 @@ import torch.optim as optim
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn import DataParallel
+
 # from torch.nn.parallel import DistributedDataParallel as DDP
 import numpy as np
 import einops
@@ -59,7 +60,7 @@ def create_cfg():
         "debug_overfit": False,
         "normalization": "LN",  # 'LN' 'RMS' or None
         # "max_tokens": 15 * 10 ** 9,
-        "max_tokens": 15*10**9,
+        "max_tokens": 15 * 10**9,
         "version": 39,
         "use_float16": False,
         "use_bfloat16": False,
@@ -85,7 +86,7 @@ def create_cfg():
         "ln_eps": 1e-5,
         "lr_schedule": "cosine_warmup",
         # "warmup_tokens": 25 * 10 ** 7,
-        "warmup_tokens": 2*10**8,
+        "warmup_tokens": 2 * 10**8,
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
@@ -95,8 +96,7 @@ def create_cfg():
     # print()
     cfg["n_heads"] = cfg["d_model"] // cfg["d_head"]
     cfg["d_mlp"] = 4 * cfg["d_model"]
-    cfg["tokens_per_step"] = cfg["batch_size"] * \
-        cfg["n_ctx"] * cfg["batches_per_step"]
+    cfg["tokens_per_step"] = cfg["batch_size"] * cfg["n_ctx"] * cfg["batches_per_step"]
     cfg["max_steps"] = cfg["max_tokens"] // cfg["tokens_per_step"]
     cfg["warmup_steps"] = cfg["warmup_tokens"] // cfg["tokens_per_step"]
     # cfg['checkpoint_every'] = cfg['checkpoint_every_tokens']//cfg['tokens_per_step']
@@ -345,8 +345,7 @@ class Embed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_E = nn.Parameter(torch.empty(
-            self.cfg["d_vocab"], self.cfg["d_model"]))
+        self.W_E = nn.Parameter(torch.empty(self.cfg["d_vocab"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_E, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, tokens):
@@ -375,8 +374,7 @@ class Unembed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_U = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_vocab"]))
+        self.W_U = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_vocab"]))
         nn.init.kaiming_uniform_(self.W_U, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, residual):
@@ -404,8 +402,7 @@ class PosEmbed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_pos = nn.Parameter(torch.empty(
-            self.cfg["n_ctx"], self.cfg["d_model"]))
+        self.W_pos = nn.Parameter(torch.empty(self.cfg["n_ctx"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_pos, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, x):
@@ -476,29 +473,22 @@ class Attention(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_Q = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_Q = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_Q, a=np.sqrt(5), mode="fan_out")
         self.W_K = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_K = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_K = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_K, a=np.sqrt(5), mode="fan_out")
         self.W_V = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_V = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_V = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_V, a=np.sqrt(5), mode="fan_out")
         self.W_O = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_head"], self.cfg["d_model"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_head"], self.cfg["d_model"])
         )
         self.b_O = nn.Parameter(torch.zeros(self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_O, a=np.sqrt(5), mode="fan_out")
@@ -564,8 +554,7 @@ class Attention(nn.Module):
             )  # [batch, pos, head_index, d_head]
 
         v = self.hook_v(
-            amp_einsum("bpm,imh->bpih", x, self.W_V,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpm,imh->bpih", x, self.W_V, self.cfg["use_bfloat16_matmul"])
             + self.b_V
         )  # [batch, pos, head_index, d_head]
         attn_scores = (
@@ -621,12 +610,10 @@ class MLP(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_in = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_mlp"]))
+        self.W_in = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_mlp"]))
         nn.init.kaiming_uniform_(self.W_in, a=np.sqrt(5), mode="fan_out")
         self.b_in = nn.Parameter(torch.zeros(self.cfg["d_mlp"]))
-        self.W_out = nn.Parameter(torch.empty(
-            self.cfg["d_mlp"], self.cfg["d_model"]))
+        self.W_out = nn.Parameter(torch.empty(self.cfg["d_mlp"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_out, a=np.sqrt(5), mode="fan_out")
         self.b_out = nn.Parameter(torch.zeros(self.cfg["d_model"]))
 
@@ -643,21 +630,18 @@ class MLP(nn.Module):
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
-            raise ValueError(
-                f"Invalid activation function name: {self.cfg['act_fn']}")
+            raise ValueError(f"Invalid activation function name: {self.cfg['act_fn']}")
 
     def forward(self, x):
         x = self.hook_pre(
-            amp_einsum("bpd,dm->bpm", x, self.W_in,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpd,dm->bpm", x, self.W_in, self.cfg["use_bfloat16_matmul"])
             + self.b_in
         )  # [batch, pos, d_mlp]
         x = self.hook_post(self.act_fn(x))  # [batch, pos, d_mlp]
         if self.cfg["act_fn"].lower() == "solu":
             x = self.hook_post_ln(self.ln(x))
         x = (
-            amp_einsum("bpm,md->bpd", x, self.W_out,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpm,md->bpd", x, self.W_out, self.cfg["use_bfloat16_matmul"])
             + self.b_out
         )  # [batch, pos, d_model]
         return x
@@ -694,17 +678,14 @@ class TransformerBlock(nn.Module):
             attn_out = self.hook_attn_out(
                 self.attn(resid_pre, pos_embed)
             )  # [batch, pos, d_model]
-        resid_mid = self.hook_resid_mid(
-            resid_pre + attn_out)  # [batch, pos, d_model]
+        resid_mid = self.hook_resid_mid(resid_pre + attn_out)  # [batch, pos, d_model]
         if self.cfg["normalization"] is not None:
             mlp_out = self.hook_mlp_out(
                 self.mlp(self.norm2(resid_mid))
             )  # [batch, pos, d_model]
         else:
-            mlp_out = self.hook_mlp_out(
-                self.mlp(resid_mid))  # [batch, pos, d_model]
-        resid_post = self.hook_resid_post(
-            resid_mid + mlp_out)  # [batch, pos, d_model]
+            mlp_out = self.hook_mlp_out(self.mlp(resid_mid))  # [batch, pos, d_model]
+        resid_post = self.hook_resid_post(resid_mid + mlp_out)  # [batch, pos, d_model]
         return resid_post
 
 
@@ -746,8 +727,7 @@ class Transformer(HookedRootModule):
         #     # If text, convert to tokens (batch_size=1)
         #     x = self.to_tokens(x)
         embed = self.hook_embed(self.embed(tokens))  # [batch, pos, d_model]
-        pos_embed = self.hook_pos_embed(
-            self.pos_embed(tokens))  # [batch, pos, d_model]
+        pos_embed = self.hook_pos_embed(self.pos_embed(tokens))  # [batch, pos, d_model]
         if self.cfg["use_pos_resid"]:
             residual = embed + pos_embed  # [batch, pos, d_model]
         else:
@@ -758,8 +738,7 @@ class Transformer(HookedRootModule):
             residual = block(residual, pos_embed)  # [batch, pos, d_model]
         if self.cfg["normalization"] is not None:
             residual = self.norm(residual)
-        logits = self.unembed(residual.to(torch.float32)
-                              )  # [batch, pos, d_vocab]
+        logits = self.unembed(residual.to(torch.float32))  # [batch, pos, d_vocab]
         if return_loss:
             return loss_fn(logits, tokens)
         else:
@@ -779,11 +758,12 @@ def init_tokenizer():
 
 def create_dataset(cfg):
     data = datasets.concatenate_datasets(
-        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)])
+        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)]
+    )
     data = data.with_format("torch")
-    data = data.shuffle(seed=cfg['seed'])
+    data = data.shuffle(seed=cfg["seed"])
     print(data)
-    data_loader = DataLoader(data, num_workers=8, batch_size=cfg['batch_size'])
+    data_loader = DataLoader(data, num_workers=8, batch_size=cfg["batch_size"])
     return data_loader
     # tokenizer = init_tokenizer()
     # seq_len = cfg["n_ctx"]
@@ -967,8 +947,7 @@ def main(mixed_precision="bf16", seed: int = 42):
     model_name = f'SoLU_{cfg["n_layers"]}L_v{cfg["version"]}'
 
     if True:
-        wandb.init(project="solu",
-                   entity="mechanistic-interpretability", config=cfg)
+        wandb.init(project="solu", entity="mechanistic-interpretability", config=cfg)
 
         torch.save(cfg, model_name + "_config.pth")
         wandb.save(model_name + "_config.pth")
@@ -1012,8 +991,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             else:
                 param_groups["no_decay"].append(param)
         optim_groups = [
-            {"params": param_groups["decay"],
-                "weight_decay": cfg["weight_decay"]},
+            {"params": param_groups["decay"], "weight_decay": cfg["weight_decay"]},
             {"params": param_groups["no_decay"], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=cfg["lr"])
@@ -1040,8 +1018,9 @@ def main(mixed_precision="bf16", seed: int = 42):
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
-    parallel_model = torch.nn.DataParallel(model,
-                                           device_ids=list(range(torch.cuda.device_count())))
+    parallel_model = torch.nn.DataParallel(
+        model, device_ids=list(range(torch.cuda.device_count()))
+    )
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         batch = batch["text"]
         if cfg["debug"] and epoch == 0 and c < 3 and True:
@@ -1063,11 +1042,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             if cfg["lr_schedule"] is not None:
                 scheduler.step()
             optimizer.zero_grad()
-            if (
-                True
-                and schedule.step()
-                and cfg["use_checkpoint_schedule"]
-            ):
+            if True and schedule.step() and cfg["use_checkpoint_schedule"]:
                 print(
                     f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
                 )
@@ -1075,11 +1050,9 @@ def main(mixed_precision="bf16", seed: int = 42):
                     if cfg["save_checkpoints_to_bfloat16"]:
                         save_to_bfloat16(model, f"{model_name}_{step:0>6}.pth")
                     else:
-                        torch.save(model.state_dict(),
-                                   f"{model_name}_{step:0>6}.pth")
+                        torch.save(model.state_dict(), f"{model_name}_{step:0>6}.pth")
                     torch.save(
-                        optimizer.state_dict(
-                        ), f"{model_name}_opt_checkpoint.pth"
+                        optimizer.state_dict(), f"{model_name}_opt_checkpoint.pth"
                     )
                     if cfg["lr_schedule"] is not None:
                         torch.save(
@@ -1094,12 +1067,15 @@ def main(mixed_precision="bf16", seed: int = 42):
                 1 - cfg["train_loss_ewma_beta"]
             )
             loss_ewmas.append(loss_ewma)
-            if True and step%50 == 0:
-                log_dict = {"scheduled_lr": scheduler.get_last_lr()[0], "loss": running_loss,
-                        "loss_ewma": loss_ewma,
-                        "elapsed": time.time() - start_time,
-                        "total_tokens": total_tokens,
-                        "c": c,}
+            if True and step % 50 == 0:
+                log_dict = {
+                    "scheduled_lr": scheduler.get_last_lr()[0],
+                    "loss": running_loss,
+                    "loss_ewma": loss_ewma,
+                    "elapsed": time.time() - start_time,
+                    "total_tokens": total_tokens,
+                    "c": c,
+                }
                 wandb.log(
                     log_dict,
                     step=step,

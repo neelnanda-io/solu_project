@@ -1,5 +1,5 @@
 # %%
-# Imports - 
+# Imports -
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,17 +64,19 @@ from rich import print as rprint
 
 # %%
 from IPython import get_ipython
+
 try:
     ipython = get_ipython()
     # Code to automatically update the EasyTransformer code as its edited without restarting the kernel
     ipython.magic("load_ext autoreload")
     ipython.magic("autoreload 2")
     import plotly.io as pio
+
     pio.renderers.default = "vscode"
     IS_IPYTHON = True
 except:
     IS_IPYTHON = False
-  
+
 
 # %%
 @dataclass
@@ -86,36 +88,43 @@ class TrainingConfig:
     batches_per_step: int = 1
     seed: int = 12345
     debug: bool = True
-    initializer_scale: float = 1.
+    initializer_scale: float = 1.0
 
     model_cfg: EasyTransformerConfig = None
-    
+
     @classmethod
     def from_dict(cls, **cfg_dict):
         model_config_keys = EasyTransformerConfig.__dataclass_fields__.keys()
-        
-        model_cfg_dict = {k:v for k, v in cfg_dict.items() if k in model_config_keys}
-        training_cfg_dict = {k:v for k, v in cfg_dict.items() if k not in model_config_keys}
 
-        if training_cfg_dict['apply_anthropic_hyper_params']:
-            n_layers = model_cfg_dict['n_layers']
-            model_cfg_dict['d_model'] = n_layers * 128
-            model_cfg_dict['d_mlp'] = 4 * model_cfg_dict['d_model']
-            model_cfg_dict['d_head'] = 64
-            assert model_cfg_dict['d_model'] % model_cfg_dict['d_head'] == 0, f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
-            model_cfg_dict['n_heads'] = model_cfg_dict['d_model']//model_cfg_dict['d_head']
-        model_cfg_dict['attn_scale_full'] = True
+        model_cfg_dict = {k: v for k, v in cfg_dict.items() if k in model_config_keys}
+        training_cfg_dict = {
+            k: v for k, v in cfg_dict.items() if k not in model_config_keys
+        }
+
+        if training_cfg_dict["apply_anthropic_hyper_params"]:
+            n_layers = model_cfg_dict["n_layers"]
+            model_cfg_dict["d_model"] = n_layers * 128
+            model_cfg_dict["d_mlp"] = 4 * model_cfg_dict["d_model"]
+            model_cfg_dict["d_head"] = 64
+            assert (
+                model_cfg_dict["d_model"] % model_cfg_dict["d_head"] == 0
+            ), f"d_head: {model_cfg_dict['d_head']} is not a divisor of d_model: {model_cfg_dict['d_model']}"
+            model_cfg_dict["n_heads"] = (
+                model_cfg_dict["d_model"] // model_cfg_dict["d_head"]
+            )
+        model_cfg_dict["attn_scale_full"] = True
         model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
         # if cfg_dict['debug']:
         #     rprint(training_cfg_dict)
         #     rprint(model_cfg_dict)
-        return cls(model_cfg = model_cfg, **training_cfg_dict)
+        return cls(model_cfg=model_cfg, **training_cfg_dict)
+
 
 cfg = TrainingConfig.from_dict(
-    n_layers = 2,
-    apply_anthropic_hyper_params = True,
-    act_fn='solu_ln',
-    tokenizer_name = "EleutherAI/gpt-neox-20b",
+    n_layers=2,
+    apply_anthropic_hyper_params=True,
+    act_fn="solu_ln",
+    tokenizer_name="EleutherAI/gpt-neox-20b",
     lr=1e-3,
     n_ctx=1024,
     batch_size=2,
@@ -138,17 +147,22 @@ rprint(model)
 - 
 """
 
+
 def load_data(cfg):
-    data = datasets.concatenate_datasets([datasets.load_from_disk(Path.home()/f"data/pile_0{i}.hf") for i in range(3)])
+    data = datasets.concatenate_datasets(
+        [datasets.load_from_disk(Path.home() / f"data/pile_0{i}.hf") for i in range(3)]
+    )
     data = data.with_format("torch")
     data.shuffle(seed=cfg.seed)
     print(data)
     data_loader = DataLoader(data, num_workers=8, batch_size=cfg.batch_size)
     return data_loader
 
+
 data_loader = load_data(cfg)
 # %%
 import argparse
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -165,26 +179,27 @@ def main():
     cfg = TrainingConfig.from_dict(**vars(args))
 
     print(
-        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
-    for key in (cfg.keys()):
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params"
+    )
+    for key in cfg.keys():
         print(f"{key}: {cfg[key]}")
     print(
-        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params")
-
+        f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params"
+    )
 
     model = EasyTransformer.from_config(cfg.model_cfg)
     for name, param in model.named_parameters():
-        scale = 1600/cfg.d_model
+        scale = 1600 / cfg.d_model
         if "W_" in name:
             if name.endswith("W_E") or name.endswith("W_pos"):
                 param.data.normal_(mean=0.0, std=cfg.initializer_scale)
             elif name.endswith("W_U"):
-                param.data.normal_(mean=0.0, std=(0.02*scale)**2 * cfg.initializer_scale)
+                param.data.normal_(
+                    mean=0.0, std=(0.02 * scale) ** 2 * cfg.initializer_scale
+                )
             else:
-                param.data.normal_(mean=0.0, std=(0.02*scale) * cfg.initializer_scale)
+                param.data.normal_(mean=0.0, std=(0.02 * scale) * cfg.initializer_scale)
 
     accelerator = Accelerator(
-    mixed_precision='bf16', gradient_accumulation_steps=cfg.batches_per_step)
-    
-    
-
+        mixed_precision="bf16", gradient_accumulation_steps=cfg.batches_per_step
+    )

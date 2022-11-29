@@ -63,7 +63,7 @@ def create_cfg():
         "debug_overfit": False,
         "normalization": "LN",  # 'LN' 'RMS' or None
         # "max_tokens": 15 * 10 ** 9,
-        "max_tokens": 15*10**9,
+        "max_tokens": 15 * 10**9,
         "version": 38,
         "use_float16": False,
         "use_bfloat16": False,
@@ -89,11 +89,11 @@ def create_cfg():
         "ln_eps": 1e-5,
         "lr_schedule": "cosine_warmup",
         # "warmup_tokens": 25 * 10 ** 7,
-        "warmup_tokens": 2*10**8,
+        "warmup_tokens": 2 * 10**8,
         "factored_embed": False,
         "train_loss_ewma_beta": 0.99,
         "shuffled_data": True,
-        "initializer_scale": 1.
+        "initializer_scale": 1.0
         # 'W_O_init_scale':True,
     }
     # print('Old')
@@ -101,8 +101,7 @@ def create_cfg():
     # print()
     cfg["n_heads"] = cfg["d_model"] // cfg["d_head"]
     cfg["d_mlp"] = 4 * cfg["d_model"]
-    cfg["tokens_per_step"] = cfg["batch_size"] * \
-        cfg["n_ctx"] * cfg["batches_per_step"]
+    cfg["tokens_per_step"] = cfg["batch_size"] * cfg["n_ctx"] * cfg["batches_per_step"]
     cfg["max_steps"] = cfg["max_tokens"] // cfg["tokens_per_step"]
     cfg["warmup_steps"] = cfg["warmup_tokens"] // cfg["tokens_per_step"]
     # cfg['checkpoint_every'] = cfg['checkpoint_every_tokens']//cfg['tokens_per_step']
@@ -351,8 +350,7 @@ class Embed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_E = nn.Parameter(torch.empty(
-            self.cfg["d_vocab"], self.cfg["d_model"]))
+        self.W_E = nn.Parameter(torch.empty(self.cfg["d_vocab"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_E, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, tokens):
@@ -381,8 +379,7 @@ class Unembed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_U = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_vocab"]))
+        self.W_U = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_vocab"]))
         nn.init.kaiming_uniform_(self.W_U, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, residual):
@@ -410,8 +407,7 @@ class PosEmbed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_pos = nn.Parameter(torch.empty(
-            self.cfg["n_ctx"], self.cfg["d_model"]))
+        self.W_pos = nn.Parameter(torch.empty(self.cfg["n_ctx"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_pos, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, x):
@@ -482,29 +478,22 @@ class Attention(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_Q = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_Q = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_Q, a=np.sqrt(5), mode="fan_out")
         self.W_K = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_K = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_K = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_K, a=np.sqrt(5), mode="fan_out")
         self.W_V = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_V = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_V = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_V, a=np.sqrt(5), mode="fan_out")
         self.W_O = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_head"], self.cfg["d_model"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_head"], self.cfg["d_model"])
         )
         self.b_O = nn.Parameter(torch.zeros(self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_O, a=np.sqrt(5), mode="fan_out")
@@ -570,8 +559,7 @@ class Attention(nn.Module):
             )  # [batch, pos, head_index, d_head]
 
         v = self.hook_v(
-            amp_einsum("bpm,imh->bpih", x, self.W_V,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpm,imh->bpih", x, self.W_V, self.cfg["use_bfloat16_matmul"])
             + self.b_V
         )  # [batch, pos, head_index, d_head]
         attn_scores = (
@@ -627,12 +615,10 @@ class MLP(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_in = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_mlp"]))
+        self.W_in = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_mlp"]))
         nn.init.kaiming_uniform_(self.W_in, a=np.sqrt(5), mode="fan_out")
         self.b_in = nn.Parameter(torch.zeros(self.cfg["d_mlp"]))
-        self.W_out = nn.Parameter(torch.empty(
-            self.cfg["d_mlp"], self.cfg["d_model"]))
+        self.W_out = nn.Parameter(torch.empty(self.cfg["d_mlp"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_out, a=np.sqrt(5), mode="fan_out")
         self.b_out = nn.Parameter(torch.zeros(self.cfg["d_model"]))
 
@@ -648,21 +634,18 @@ class MLP(nn.Module):
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
-            raise ValueError(
-                f"Invalid activation function name: {self.cfg['act_fn']}")
+            raise ValueError(f"Invalid activation function name: {self.cfg['act_fn']}")
 
     def forward(self, x):
         x = self.hook_pre(
-            amp_einsum("bpd,dm->bpm", x, self.W_in,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpd,dm->bpm", x, self.W_in, self.cfg["use_bfloat16_matmul"])
             + self.b_in
         )  # [batch, pos, d_mlp]
         x = self.hook_post(self.act_fn(x))  # [batch, pos, d_mlp]
         if self.cfg["act_fn"].lower() == "solu":
             x = self.hook_post_ln(self.ln(x))
         x = (
-            amp_einsum("bpm,md->bpd", x, self.W_out,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpm,md->bpd", x, self.W_out, self.cfg["use_bfloat16_matmul"])
             + self.b_out
         )  # [batch, pos, d_model]
         return x
@@ -699,17 +682,14 @@ class TransformerBlock(nn.Module):
             attn_out = self.hook_attn_out(
                 self.attn(resid_pre, pos_embed)
             )  # [batch, pos, d_model]
-        resid_mid = self.hook_resid_mid(
-            resid_pre + attn_out)  # [batch, pos, d_model]
+        resid_mid = self.hook_resid_mid(resid_pre + attn_out)  # [batch, pos, d_model]
         if self.cfg["normalization"] is not None:
             mlp_out = self.hook_mlp_out(
                 self.mlp(self.norm2(resid_mid))
             )  # [batch, pos, d_model]
         else:
-            mlp_out = self.hook_mlp_out(
-                self.mlp(resid_mid))  # [batch, pos, d_model]
-        resid_post = self.hook_resid_post(
-            resid_mid + mlp_out)  # [batch, pos, d_model]
+            mlp_out = self.hook_mlp_out(self.mlp(resid_mid))  # [batch, pos, d_model]
+        resid_post = self.hook_resid_post(resid_mid + mlp_out)  # [batch, pos, d_model]
         return resid_post
 
 
@@ -757,8 +737,7 @@ class Transformer(HookedRootModule):
         #     # If text, convert to tokens (batch_size=1)
         #     x = self.to_tokens(x)
         embed = self.hook_embed(self.embed(tokens))  # [batch, pos, d_model]
-        pos_embed = self.hook_pos_embed(
-            self.pos_embed(tokens))  # [batch, pos, d_model]
+        pos_embed = self.hook_pos_embed(self.pos_embed(tokens))  # [batch, pos, d_model]
         if self.cfg["use_pos_resid"]:
             residual = embed + pos_embed  # [batch, pos, d_model]
         else:
@@ -769,8 +748,7 @@ class Transformer(HookedRootModule):
             residual = block(residual, pos_embed)  # [batch, pos, d_model]
         if self.cfg["normalization"] is not None:
             residual = self.norm(residual)
-        logits = self.unembed(residual.to(torch.float32)
-                              )  # [batch, pos, d_vocab]
+        logits = self.unembed(residual.to(torch.float32))  # [batch, pos, d_vocab]
         if return_loss:
             return loss_fn(logits, tokens)
         else:
@@ -791,11 +769,12 @@ def init_tokenizer():
 def create_dataset(cfg):
 
     data = datasets.concatenate_datasets(
-        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)])
+        [datasets.load_from_disk(f"/home/ubuntu/data/pile_0{i}.hf") for i in range(3)]
+    )
     data = data.with_format("torch")
-    data.shuffle(seed=cfg['seed'])
+    data.shuffle(seed=cfg["seed"])
     print(data)
-    data_loader = DataLoader(data, num_workers=8, batch_size=cfg['batch_size'])
+    data_loader = DataLoader(data, num_workers=8, batch_size=cfg["batch_size"])
     return data_loader
 
     tokenizer = init_tokenizer(accelerator)
@@ -807,8 +786,7 @@ def create_dataset(cfg):
         full_text = tokenizer.eos_token.join(texts)
         div = 20
         length = len(full_text) // div
-        text_list = [full_text[i * length: (i + 1) * length]
-                     for i in range(div)]
+        text_list = [full_text[i * length : (i + 1) * length] for i in range(div)]
         tokens = tokenizer(text_list, return_tensors="np", padding=True)[
             "input_ids"
         ].flatten()
@@ -824,8 +802,7 @@ def create_dataset(cfg):
             batch_size=curr_batch_size,
             seq=seq_len - 1,
         )
-        prefix = np.ones((curr_batch_size, 1), dtype=np.int64) * \
-            tokenizer.bos_token_id
+        prefix = np.ones((curr_batch_size, 1), dtype=np.int64) * tokenizer.bos_token_id
         # print(tokens.shape, n, curr_batch_size, seq_len)
         return {
             "text": np.concatenate([prefix, tokens], axis=1)
@@ -849,7 +826,8 @@ def create_dataset(cfg):
                 )
             else:
                 dataset = load_dataset(
-                    cfg["dataset_name"], streaming=True, split="train")
+                    cfg["dataset_name"], streaming=True, split="train"
+                )
             print("Loaded!", time.time() - start_time)
             start_time = time.time()
             try:
@@ -869,11 +847,16 @@ def create_dataset(cfg):
             print("dataset.shuffle", time.time() - start_time)
             start_time = time.time()
             train_data_loader = DataLoader(
-                dataset, batch_size=cfg["batch_size"], num_workers=3)
+                dataset, batch_size=cfg["batch_size"], num_workers=3
+            )
             print("train_data_loader =", time.time() - start_time)
         elif cfg["dataset_name"] == "wikipedia":
             dataset = load_dataset(
-                cfg["dataset_name"], cfg["dataset_subset_name"], split="train", cache_dir="cache")
+                cfg["dataset_name"],
+                cfg["dataset_subset_name"],
+                split="train",
+                cache_dir="cache",
+            )
             try:
                 dataset = dataset.remove_columns(["id", "url", "title"])
             except:
@@ -887,35 +870,31 @@ def create_dataset(cfg):
             print("dataset.set_format", time.time() - start_time)
             start_time = time.time()
             dataset = dataset.shuffle(seed=cfg["seed"])
-            train_data_loader = DataLoader(
-                dataset, batch_size=cfg["batch_size"])
+            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
             print("train_data_loader =", time.time() - start_time)
         elif cfg["dataset_name"] == "c4":
-            dataset = load_dataset('c4', "en", streaming=True, split='train')
-            dataset = dataset.remove_columns(['url', 'timestamp'])
+            dataset = load_dataset("c4", "en", streaming=True, split="train")
+            dataset = dataset.remove_columns(["url", "timestamp"])
             dataset = dataset.map(tokenize, batched=True)
-            dataset = dataset.with_format(type='torch')
-            dataset = dataset.shuffle(seed=cfg['seed'])
-            train_data_loader = DataLoader(
-                dataset, batch_size=cfg['batch_size'])
+            dataset = dataset.with_format(type="torch")
+            dataset = dataset.shuffle(seed=cfg["seed"])
+            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
         else:
             raise ValueError(f"Invalid Dataset Name: {cfg['dataset_name']}")
 
     else:
-        if cfg['dataset_name'] == 'c4':
-            dataset = load_dataset('c4', "en", streaming=True, split='train')
-            dataset = dataset.remove_columns(['url', 'timestamp'])
+        if cfg["dataset_name"] == "c4":
+            dataset = load_dataset("c4", "en", streaming=True, split="train")
+            dataset = dataset.remove_columns(["url", "timestamp"])
             dataset = dataset.map(tokenize, batched=True)
-            dataset = dataset.with_format(type='torch')
-            dataset = dataset.shuffle(seed=cfg['seed'])
-            train_data_loader = DataLoader(
-                dataset, batch_size=cfg['batch_size'])
+            dataset = dataset.with_format(type="torch")
+            dataset = dataset.shuffle(seed=cfg["seed"])
+            train_data_loader = DataLoader(dataset, batch_size=cfg["batch_size"])
         else:
             streaming_owt = load_dataset(
                 "stas/openwebtext-10k", split="train", cache_dir="cache"
             )
-            streaming_owt = streaming_owt.map(
-                tokenize, batched=True, num_proc=10)
+            streaming_owt = streaming_owt.map(tokenize, batched=True, num_proc=10)
             streaming_owt = streaming_owt.with_format(type="torch")
             train_data_loader = DataLoader(
                 streaming_owt, batch_size=cfg["batch_size"], shuffle=True
@@ -927,8 +906,7 @@ def create_dataset(cfg):
                     print(c, time.time() - start_time)
                     start_time = time.time()
                 elif c == 1:
-                    print("Time for next batch:",
-                                      time.time() - start_time)
+                    print("Time for next batch:", time.time() - start_time)
                     break
     return train_data_loader
 
@@ -984,8 +962,7 @@ def main(mixed_precision="bf16", seed: int = 42):
     model_name = f'SoLU_{cfg["n_layers"]}L_v{cfg["version"]}'
 
     if True:
-        wandb.init(project="solu",
-                   entity="mechanistic-interpretability", config=cfg)
+        wandb.init(project="solu", entity="mechanistic-interpretability", config=cfg)
 
         torch.save(cfg, model_name + "_config.pth")
         wandb.save(model_name + "_config.pth")
@@ -999,7 +976,7 @@ def main(mixed_precision="bf16", seed: int = 42):
     model = Transformer(cfg, tokenizer)
     for name, param in model.named_parameters():
         if "W_" in name:
-            param.data *= cfg['initializer_scale']
+            param.data *= cfg["initializer_scale"]
     model.to("cuda")
     if cfg["use_bfloat16"]:
         model.to(torch.bfloat16)
@@ -1034,8 +1011,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             else:
                 param_groups["no_decay"].append(param)
         optim_groups = [
-            {"params": param_groups["decay"],
-                "weight_decay": cfg["weight_decay"]},
+            {"params": param_groups["decay"], "weight_decay": cfg["weight_decay"]},
             {"params": param_groups["no_decay"], "weight_decay": 0.0},
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=cfg["lr"])
@@ -1059,16 +1035,17 @@ def main(mixed_precision="bf16", seed: int = 42):
     step = 0
     start_time = time.time()
     # loss_ewma = 9
-    loss_ewma = torch.tensor(9., device="cuda")
+    loss_ewma = torch.tensor(9.0, device="cuda")
     # loss_beta = 0.95
     total_tokens = 0
-    running_loss = torch.tensor(0., device="cuda")
+    running_loss = torch.tensor(0.0, device="cuda")
     prev_time = time.time()
     epoch = 0
     # for epoch in range(100):
     print("Starting epoch", epoch)
-    parallel_model = torch.nn.DataParallel(model,
-                                                                                  device_ids=list(range(torch.cuda.device_count())))
+    parallel_model = torch.nn.DataParallel(
+        model, device_ids=list(range(torch.cuda.device_count()))
+    )
 
     for c, batch in tqdm.tqdm(enumerate(data_iter)):
         # with accelerator.accumulate(model):
@@ -1076,7 +1053,7 @@ def main(mixed_precision="bf16", seed: int = 42):
         if cfg["debug"] and epoch == 0 and c < 3 and True:
             print(batch[0])
             print(tokenizer.decode(batch[0]))
-        if c<3:
+        if c < 3:
             print("Batch size:", batch.shape)
         # batch = batch.cuda()
         loss = parallel_model(batch).mean()
@@ -1092,40 +1069,30 @@ def main(mixed_precision="bf16", seed: int = 42):
 
         # dist.all_reduce(loss, op=dist.ReduceOp.SUM)
         # running_loss += accelerator.reduce(loss.detach(), "mean").item() * accelerator.gradient_accumulation_steps
-        running_loss += loss.detach() * cfg['batches_per_step']
-        batch_tokens = torch.tensor(
-            batch.numel(), device="cuda")#*8
+        running_loss += loss.detach() * cfg["batches_per_step"]
+        batch_tokens = torch.tensor(batch.numel(), device="cuda")  # *8
         # dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
 
         total_tokens += batch_tokens.item()
         if (c + 1) % cfg["batches_per_step"] == 0:
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(), cfg["grad_norm_clip"])
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_norm_clip"])
             optimizer.step()
             if cfg["lr_schedule"] is not None:
                 scheduler.step()
                 if True and step % 100 == 0:
-                    wandb.log(
-                        {"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
+                    wandb.log({"scheduled_lr": scheduler.get_last_lr()[0]}, step=step)
             optimizer.zero_grad()
-            if (
-                True
-                and schedule.step()
-                and cfg["use_checkpoint_schedule"]
-            ):
+            if True and schedule.step() and cfg["use_checkpoint_schedule"]:
                 print(
                     f"Saved the model! Step: {step}. Frac of way through training: {schedule.schedule[schedule.next_save_point-1]}"
                 )
                 if not cfg["debug"]:
                     if cfg["save_checkpoints_to_bfloat16"]:
-                        save_to_bfloat16(
-                            model, f"{model_name}_{step:0>6}.pth")
+                        save_to_bfloat16(model, f"{model_name}_{step:0>6}.pth")
                     else:
-                        torch.save(model.state_dict(),
-                                    f"{model_name}_{step:0>6}.pth")
+                        torch.save(model.state_dict(), f"{model_name}_{step:0>6}.pth")
                     torch.save(
-                        optimizer.state_dict(
-                        ), f"{model_name}_opt_checkpoint.pth"
+                        optimizer.state_dict(), f"{model_name}_opt_checkpoint.pth"
                     )
                     if cfg["lr_schedule"] is not None:
                         torch.save(
@@ -1142,7 +1109,7 @@ def main(mixed_precision="bf16", seed: int = 42):
             # loss_ewmas.append(loss_ewma)
             if True and step % 100 == 0:
                 log_dict = {
-                    "loss": running_loss.item() * cfg['batches_per_step'],
+                    "loss": running_loss.item() * cfg["batches_per_step"],
                     "loss_ewma": loss_ewma,
                     "elapsed": time.time() - start_time,
                     "total_tokens": total_tokens,

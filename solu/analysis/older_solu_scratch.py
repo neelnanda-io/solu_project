@@ -205,17 +205,16 @@ print("Finish")
 #     return tokenizer.batch_decode(tokenizer.encode("<|endoftext|>"+text))
 
 
-
 # for neuron_index in range(1):
 #     print(neuron_index)
 #     v = torch.zeros_like(cache['blocks.0.mlp.hook_pre'][:, neuron_index])
 #     v[0]=1.
 #     vis_activations(example_text, v, name=f'Pre Activation for neuron {neuron_index}')
 #     vis_activations(example_text, cache['blocks.0.mlp.hook_pre'][:, neuron_index], name=f'Pre Activation for neuron {neuron_index}')
-    
-    # vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post Activation for neuron {neuron_index}')
-    # vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post LN for neuron {neuron_index}')
-    
+
+# vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post Activation for neuron {neuron_index}')
+# vis_activations(example_text, cache['blocks.0.mlp.hook_post'][:, neuron_index], name=f'Post LN for neuron {neuron_index}')
+
 
 # logits, loss = model(example_text)
 # # %%
@@ -244,13 +243,10 @@ print("Finish")
 # train_data_loader = DataLoader(dataset, batch_size=cfg['batch_size'])
 
 
-
 # print('Loaded!', time.time()-start_time)
 # start_time = time.time()
 # dataset = dataset.map(tokenize, batched=True, num_proc=20)
 # print('dataset.map', time.time()-start_time)
-
-
 
 
 # # %%
@@ -285,5 +281,5 @@ print("Finish")
 #         with record_function('fp16'):
 #             loss1 = modelfp16(tokens, return_type='loss').detach()
 #             loss2 = modelfp16(tokens2, return_type='loss').detach()
-    
+
 # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))

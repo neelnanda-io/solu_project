@@ -6,24 +6,26 @@ import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
 import numpy as np
-import einops 
+import einops
 import argparse
 import datasets
 from datasets import disable_caching
+
 disable_caching()
-datasets.config.IN_MEMORY_MAX_SIZE = 3*10**11
+datasets.config.IN_MEMORY_MAX_SIZE = 3 * 10**11
 import time
+
 start_time = time.time()
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("Index", help = "Index of Pile File", type=int, choices=range(30))
+parser.add_argument("Index", help="Index of Pile File", type=int, choices=range(30))
 # parser.add_argument("DELETE", help = "Whether to delete the entire cache afterwards", type=bool)
-parser.add_argument("--pile", help = "Use Pile?", action='store_true')
- 
+parser.add_argument("--pile", help="Use Pile?", action="store_true")
+
 # Read arguments from command line
 args = parser.parse_args()
- 
+
 print(f"Index: {args.Index}")
 # print(f"DELETE: {args.DELETE}")
 print(f"debug: {args.pile}")
@@ -33,12 +35,14 @@ if not args.pile:
     pile_url = f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{args.Index:0>5}-of-01024.json.gz"
     # pile_url = "https://cdn-datasets.huggingface.co/nlp/datasets/openwebtext/openwebtext-10k.tar.xz"
 else:
-    pile_url = f"https://mystic.the-eye.eu/public/AI/pile/train/{args.Index:0>2}.jsonl.zst"
+    pile_url = (
+        f"https://mystic.the-eye.eu/public/AI/pile/train/{args.Index:0>2}.jsonl.zst"
+    )
 # pile_url = f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.00000-of-01024.json.gz"
 print("Reading from the Pile from", pile_url)
-dataset = load_dataset('json', data_files=pile_url, split='train', keep_in_memory=False)
+dataset = load_dataset("json", data_files=pile_url, split="train", keep_in_memory=False)
 print(dataset[0])
-print('Loaded!', time.time()-start_time)
+print("Loaded!", time.time() - start_time)
 for key in dataset.features:
     if key != "text":
         print("Deleting feature", key)
@@ -46,41 +50,50 @@ for key in dataset.features:
 print("New dataset")
 print(dataset)
 # %%
-tokenizer = AutoTokenizer.from_pretrained('EleutherAI/gpt-neox-20b')
-pad_token = '<PAD>'
-tokenizer.add_special_tokens({'pad_token':pad_token})
+tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+pad_token = "<PAD>"
+tokenizer.add_special_tokens({"pad_token": pad_token})
 print(tokenizer)
 
 seq_len = 1024
 # %%
 def tokenize(examples):
-    texts = examples['text']
+    texts = examples["text"]
     full_text = tokenizer.eos_token.join(texts)
     div = 20
-    length = len(full_text)//div
-    text_list = [full_text[i*length:(i+1)*length] for i in range(div)]
-    tokens = tokenizer(text_list, return_tensors='np', padding=True)['input_ids'].flatten()
-    tokens = tokens[tokens!=tokenizer.pad_token_id]
-    
+    length = len(full_text) // div
+    text_list = [full_text[i * length : (i + 1) * length] for i in range(div)]
+    tokens = tokenizer(text_list, return_tensors="np", padding=True)[
+        "input_ids"
+    ].flatten()
+    tokens = tokens[tokens != tokenizer.pad_token_id]
+
     n = len(tokens)
-    curr_batch_size = n//(seq_len-1)
-    tokens = tokens[:(seq_len-1)*curr_batch_size]
-    tokens = einops.rearrange(tokens, '(batch_size seq) -> batch_size seq', batch_size=curr_batch_size, seq=seq_len-1)
-    prefix = np.ones((curr_batch_size, 1), dtype=np.int64)*tokenizer.bos_token_id
-    return {'text': np.concatenate([prefix, tokens], axis=1)}
+    curr_batch_size = n // (seq_len - 1)
+    tokens = tokens[: (seq_len - 1) * curr_batch_size]
+    tokens = einops.rearrange(
+        tokens,
+        "(batch_size seq) -> batch_size seq",
+        batch_size=curr_batch_size,
+        seq=seq_len - 1,
+    )
+    prefix = np.ones((curr_batch_size, 1), dtype=np.int64) * tokenizer.bos_token_id
+    return {"text": np.concatenate([prefix, tokens], axis=1)}
+
+
 print("Starting to map:")
 start_time = time.time()
 dataset = dataset.map(tokenize, batched=True, num_proc=20, keep_in_memory=True)
-print('dataset.map', time.time()-start_time)
-dataset = dataset.with_format(type='torch')
+print("dataset.map", time.time() - start_time)
+dataset = dataset.with_format(type="torch")
 print("Set torch!")
 if not args.pile:
-    file_path = Path.home()/f"data/c4_{args.Index:0>5}.hf"
+    file_path = Path.home() / f"data/c4_{args.Index:0>5}.hf"
 else:
-    file_path = Path.home()/f"data/pile_{args.Index:0>2}.hf"
+    file_path = Path.home() / f"data/pile_{args.Index:0>2}.hf"
 print("Saving to file", file_path)
 dataset.save_to_disk(file_path)
 print("Number of removed cache files:", dataset.cleanup_cache_files())
 # %%
-print("Time taken:", time.time()-start_time)
+print("Time taken:", time.time() - start_time)
 # os.system("rm ~/cache/* -r")

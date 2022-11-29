@@ -22,6 +22,7 @@ def amp_einsum(einsum_str, mat1, mat2, use_bfloat16=True):
     else:
         return torch.einsum(einsum_str, mat1, mat2)
 
+
 # Embed & Unembed
 
 
@@ -29,8 +30,7 @@ class Embed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_E = nn.Parameter(torch.empty(
-            self.cfg["d_vocab"], self.cfg["d_model"]))
+        self.W_E = nn.Parameter(torch.empty(self.cfg["d_vocab"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_E, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, tokens):
@@ -59,13 +59,14 @@ class Unembed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_U = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_vocab"]))
+        self.W_U = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_vocab"]))
         nn.init.kaiming_uniform_(self.W_U, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, residual):
         return amp_einsum(
-            "bpm,mv->bpv", residual, self.W_U,
+            "bpm,mv->bpv",
+            residual,
+            self.W_U,
         )  # [batch, pos, d_vocab]
 
 
@@ -88,8 +89,7 @@ class PosEmbed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_pos = nn.Parameter(torch.empty(
-            self.cfg["n_ctx"], self.cfg["d_model"]))
+        self.W_pos = nn.Parameter(torch.empty(self.cfg["n_ctx"], self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_pos, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, x):
@@ -160,29 +160,22 @@ class Attention(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_Q = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_Q = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_Q, a=np.sqrt(5), mode="fan_out")
         self.W_K = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_K = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_K = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_K, a=np.sqrt(5), mode="fan_out")
         self.W_V = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_V = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_V = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         nn.init.kaiming_uniform_(self.W_V, a=np.sqrt(5), mode="fan_out")
         self.W_O = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_head"], self.cfg["d_model"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_head"], self.cfg["d_model"])
         )
         self.b_O = nn.Parameter(torch.zeros(self.cfg["d_model"]))
         nn.init.kaiming_uniform_(self.W_O, a=np.sqrt(5), mode="fan_out")
@@ -233,21 +226,14 @@ class Attention(nn.Module):
             )  # [batch, pos, head_index, d_head]
         else:
             q = self.hook_q(
-                amp_einsum(
-                    "bpm,imh->bpih", x, self.W_Q
-                )
-                + self.b_Q
+                amp_einsum("bpm,imh->bpih", x, self.W_Q) + self.b_Q
             )  # [batch, pos, head_index, d_head]
             k = self.hook_k(
-                amp_einsum(
-                    "bpm,imh->bpih", x, self.W_K
-                )
-                + self.b_K
+                amp_einsum("bpm,imh->bpih", x, self.W_K) + self.b_K
             )  # [batch, pos, head_index, d_head]
 
         v = self.hook_v(
-            amp_einsum("bpm,imh->bpih", x, self.W_V)
-            + self.b_V
+            amp_einsum("bpm,imh->bpih", x, self.W_V) + self.b_V
         )  # [batch, pos, head_index, d_head]
         attn_scores = (
             amp_einsum(
@@ -264,24 +250,17 @@ class Attention(nn.Module):
             F.softmax(attn_scores, dim=-1)
         )  # [batch, head_index, query_pos, key_pos]
         z = self.hook_z(
-            amp_einsum(
-                "bpih,biqp->bqih", v, attn_matrix
-            )
+            amp_einsum("bpih,biqp->bqih", v, attn_matrix)
         )  # [batch, pos, head_index, d_head]
 
         if self.cfg["use_attn_result"]:
             result = self.hook_result(
-                amp_einsum(
-                    "bqih,ihm->bqim", z, self.W_O
-                )
+                amp_einsum("bqih,ihm->bqim", z, self.W_O)
             )  # [batch, pos, head_index, d_model]
-            out = result.sum(-2) + self.b_O # [batch, pos, d_model]
+            out = result.sum(-2) + self.b_O  # [batch, pos, d_model]
         else:
-            out=(
-                amp_einsum(
-                    "bqih,ihm->bqm", z, self.W_O
-                )
-                + self.b_O
+            out = (
+                amp_einsum("bqih,ihm->bqm", z, self.W_O) + self.b_O
             )  # [batch, pos, head_index, d_model]
         return out
 
@@ -296,42 +275,37 @@ class Attention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.cfg=cfg
-        self.W_in=nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_mlp"]))
-        nn.init.kaiming_uniform_(self.W_in, a = np.sqrt(5), mode = "fan_out")
-        self.b_in=nn.Parameter(torch.zeros(self.cfg["d_mlp"]))
-        self.W_out=nn.Parameter(torch.empty(
-            self.cfg["d_mlp"], self.cfg["d_model"]))
-        nn.init.kaiming_uniform_(self.W_out, a = np.sqrt(5), mode = "fan_out")
-        self.b_out=nn.Parameter(torch.zeros(self.cfg["d_model"]))
+        self.cfg = cfg
+        self.W_in = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_mlp"]))
+        nn.init.kaiming_uniform_(self.W_in, a=np.sqrt(5), mode="fan_out")
+        self.b_in = nn.Parameter(torch.zeros(self.cfg["d_mlp"]))
+        self.W_out = nn.Parameter(torch.empty(self.cfg["d_mlp"], self.cfg["d_model"]))
+        nn.init.kaiming_uniform_(self.W_out, a=np.sqrt(5), mode="fan_out")
+        self.b_out = nn.Parameter(torch.zeros(self.cfg["d_model"]))
 
-        self.hook_pre=HookPoint()  # [batch, pos, d_mlp]
-        self.hook_post=HookPoint()  # [batch, pos, d_mlp]
+        self.hook_pre = HookPoint()  # [batch, pos, d_mlp]
+        self.hook_post = HookPoint()  # [batch, pos, d_mlp]
 
         if self.cfg["act_fn"].lower() == "relu":
-            self.act_fn=F.relu
+            self.act_fn = F.relu
         elif self.cfg["act_fn"].lower() == "gelu_new":
-            self.act_fn=gelu_new
+            self.act_fn = gelu_new
         elif self.cfg["act_fn"].lower() == "solu":
-            self.act_fn=lambda x: F.softmax(x, dim=-1) * x
+            self.act_fn = lambda x: F.softmax(x, dim=-1) * x
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
-            raise ValueError(
-                f"Invalid activation function name: {self.cfg['act_fn']}")
+            raise ValueError(f"Invalid activation function name: {self.cfg['act_fn']}")
 
     def forward(self, x):
-        x=self.hook_pre(
-            amp_einsum("bpd,dm->bpm", x, self.W_in)
-            + self.b_in
+        x = self.hook_pre(
+            amp_einsum("bpd,dm->bpm", x, self.W_in) + self.b_in
         )  # [batch, pos, d_mlp]
-        x= self.hook_post(self.act_fn(x))  # [batch, pos, d_mlp]
+        x = self.hook_post(self.act_fn(x))  # [batch, pos, d_mlp]
         if self.cfg["act_fn"].lower() == "solu":
-            x= self.hook_post_ln(self.ln(x))
-        x= (
-            amp_einsum("bpm,md->bpd", x, self.W_out)
-            + self.b_out
+            x = self.hook_post_ln(self.ln(x))
+        x = (
+            amp_einsum("bpm,md->bpd", x, self.W_out) + self.b_out
         )  # [batch, pos, d_model]
         return x
 
@@ -340,27 +314,27 @@ class MLP(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, cfg, block_index):
         super().__init__()
-        self.cfg= cfg
+        self.cfg = cfg
         if self.cfg["normalization"] == "RMS":
-            self.norm1= LayerNorm(self.cfg, self.cfg["d_model"])
-            self.norm2= LayerNorm(self.cfg, self.cfg["d_model"])
+            self.norm1 = LayerNorm(self.cfg, self.cfg["d_model"])
+            self.norm2 = LayerNorm(self.cfg, self.cfg["d_model"])
         elif self.cfg["normalization"] == "LN":
-            self.norm1= LayerNorm(self.cfg, self.cfg["d_model"])
-            self.norm2= LayerNorm(self.cfg, self.cfg["d_model"])
-        self.attn= Attention(self.cfg)
-        self.mlp= MLP(self.cfg)
+            self.norm1 = LayerNorm(self.cfg, self.cfg["d_model"])
+            self.norm2 = LayerNorm(self.cfg, self.cfg["d_model"])
+        self.attn = Attention(self.cfg)
+        self.mlp = MLP(self.cfg)
 
-        self.hook_attn_out= HookPoint()  # [batch, pos, d_model]
-        self.hook_mlp_out= HookPoint()  # [batch, pos, d_model]
+        self.hook_attn_out = HookPoint()  # [batch, pos, d_model]
+        self.hook_mlp_out = HookPoint()  # [batch, pos, d_model]
         # Note that resid_pre of layer k+1 is resid_post of layer k - given for convenience
-        self.hook_resid_pre= HookPoint()  # [batch, pos, d_model]
-        self.hook_resid_mid= HookPoint()  # [batch, pos, d_model]
-        self.hook_resid_post= HookPoint()  # [batch, pos, d_model]
+        self.hook_resid_pre = HookPoint()  # [batch, pos, d_model]
+        self.hook_resid_mid = HookPoint()  # [batch, pos, d_model]
+        self.hook_resid_post = HookPoint()  # [batch, pos, d_model]
 
     def forward(self, x, pos_embed):
-        resid_pre= self.hook_resid_pre(x)  # [batch, pos, d_model]
+        resid_pre = self.hook_resid_pre(x)  # [batch, pos, d_model]
         if self.cfg["normalization"] is not None:
-            attn_out= self.hook_attn_out(
+            attn_out = self.hook_attn_out(
                 self.attn(self.norm1(resid_pre), pos_embed)
             )  # [batch, pos, d_model]
         else:

@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -188,8 +187,7 @@ class Embed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_E = nn.Parameter(torch.empty(
-            self.cfg["d_vocab"], self.cfg["d_model"]))
+        self.W_E = nn.Parameter(torch.empty(self.cfg["d_vocab"], self.cfg["d_model"]))
         # nn.init.kaiming_uniform_(self.W_E, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, tokens):
@@ -198,12 +196,12 @@ class Embed(nn.Module):
         # return einops.rearrange(self.W_E[tokens, :], 'd_model batch pos -> batch pos d_model')
         return self.W_E[tokens, :]
 
+
 class Unembed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_U = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_vocab"]))
+        self.W_U = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_vocab"]))
         # nn.init.kaiming_uniform_(self.W_U, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, residual):
@@ -211,18 +209,19 @@ class Unembed(nn.Module):
             "bpm,mv->bpv", residual, self.W_U, self.cfg["use_bfloat16_matmul"]
         )  # [batch, pos, d_vocab]
 
+
 # Positional Embeddings
 class PosEmbed(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_pos = nn.Parameter(torch.empty(
-            self.cfg["n_ctx"], self.cfg["d_model"]))
+        self.W_pos = nn.Parameter(torch.empty(self.cfg["n_ctx"], self.cfg["d_model"]))
         # nn.init.kaiming_uniform_(self.W_pos, a=np.sqrt(5), mode="fan_out")
 
     def forward(self, x):
         # Output shape [pos, d_model] - will be broadcast along batch dim
         return self.W_pos[: x.size(-1), :]  # [pos, d_model]
+
 
 class LayerNorm(nn.Module):
     def __init__(self, cfg, length):
@@ -244,35 +243,29 @@ class LayerNorm(nn.Module):
         out = (x / scale) * self.w + self.b
         return out
 
+
 # Attention
 class Attention(nn.Module):
     def __init__(self, cfg, attn_type="global"):
         super().__init__()
         self.cfg = cfg
         self.W_Q = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_Q = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_Q = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         # nn.init.kaiming_uniform_(self.W_Q, a=np.sqrt(5), mode="fan_out")
         self.W_K = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_K = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_K = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         # nn.init.kaiming_uniform_(self.W_K, a=np.sqrt(5), mode="fan_out")
         self.W_V = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_model"], self.cfg["d_head"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_model"], self.cfg["d_head"])
         )
-        self.b_V = nn.Parameter(torch.zeros(
-            self.cfg["n_heads"], self.cfg["d_head"]))
+        self.b_V = nn.Parameter(torch.zeros(self.cfg["n_heads"], self.cfg["d_head"]))
         # nn.init.kaiming_uniform_(self.W_V, a=np.sqrt(5), mode="fan_out")
         self.W_O = nn.Parameter(
-            torch.empty(self.cfg["n_heads"],
-                        self.cfg["d_head"], self.cfg["d_model"])
+            torch.empty(self.cfg["n_heads"], self.cfg["d_head"], self.cfg["d_model"])
         )
         self.b_O = nn.Parameter(torch.zeros(self.cfg["d_model"]))
 
@@ -322,25 +315,35 @@ class Attention(nn.Module):
         else:
             q = self.hook_q(
                 amp_einsum(
-                    "bpm,imh->bpih", resid_pre, self.W_Q, self.cfg["use_bfloat16_matmul"]
+                    "bpm,imh->bpih",
+                    resid_pre,
+                    self.W_Q,
+                    self.cfg["use_bfloat16_matmul"],
                 )
                 + self.b_Q
             )  # [batch, pos, head_index, d_head]
             k = self.hook_k(
                 amp_einsum(
-                    "bpm,imh->bpih", resid_pre, self.W_K, self.cfg["use_bfloat16_matmul"]
+                    "bpm,imh->bpih",
+                    resid_pre,
+                    self.W_K,
+                    self.cfg["use_bfloat16_matmul"],
                 )
                 + self.b_K
             )  # [batch, pos, head_index, d_head]
 
         v = self.hook_v(
-            amp_einsum("bpm,imh->bpih", resid_pre, self.W_V,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum(
+                "bpm,imh->bpih", resid_pre, self.W_V, self.cfg["use_bfloat16_matmul"]
+            )
             + self.b_V
         )  # [batch, pos, head_index, d_head]
         attn_scores = (
             amp_einsum(
-                "bpih,bqih->bipq", q, k, self.cfg["use_bfloat16_matmul"],
+                "bpih,bqih->bipq",
+                q,
+                k,
+                self.cfg["use_bfloat16_matmul"],
             )
             / self.attn_scale
         )  # [batch, head_index, query_pos, key_pos]
@@ -358,9 +361,7 @@ class Attention(nn.Module):
         )  # [batch, pos, head_index, d_head]
 
         out = (
-            amp_einsum(
-                "bqih,ihm->bqm", z, self.W_O, self.cfg["use_bfloat16_matmul"]
-            )
+            amp_einsum("bqih,ihm->bqm", z, self.W_O, self.cfg["use_bfloat16_matmul"])
             + self.b_O
         )  # [batch, pos, head_index, d_model]
         return out
@@ -373,17 +374,14 @@ class Attention(nn.Module):
         )
 
 
-
 class MLP(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.W_in = nn.Parameter(torch.empty(
-            self.cfg["d_model"], self.cfg["d_mlp"]))
+        self.W_in = nn.Parameter(torch.empty(self.cfg["d_model"], self.cfg["d_mlp"]))
         # nn.init.kaiming_uniform_(self.W_in, a=np.sqrt(5), mode="fan_out")
         self.b_in = nn.Parameter(torch.zeros(self.cfg["d_mlp"]))
-        self.W_out = nn.Parameter(torch.empty(
-            self.cfg["d_mlp"], self.cfg["d_model"]))
+        self.W_out = nn.Parameter(torch.empty(self.cfg["d_mlp"], self.cfg["d_model"]))
         # nn.init.kaiming_uniform_(self.W_out, a=np.sqrt(5), mode="fan_out")
         self.b_out = nn.Parameter(torch.zeros(self.cfg["d_model"]))
 
@@ -397,21 +395,20 @@ class MLP(nn.Module):
             self.hook_post_ln = HookPoint()  # [batch, pos, d_mlp]
             self.ln = LayerNorm(self.cfg, self.cfg["d_mlp"])
         else:
-            raise ValueError(
-                f"Invalid activation function name: {self.cfg['act_fn']}")
+            raise ValueError(f"Invalid activation function name: {self.cfg['act_fn']}")
 
     def forward(self, x):
         x = self.hook_pre(
-            amp_einsum("bpd,dm->bpm", x, self.W_in,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpd,dm->bpm", x, self.W_in, self.cfg["use_bfloat16_matmul"])
             + self.b_in
         )  # [batch, pos, d_mlp]
-        x = self.hook_post(self.act_fn(x/self.cfg["neuron_temp"]))  # [batch, pos, d_mlp]
+        x = self.hook_post(
+            self.act_fn(x / self.cfg["neuron_temp"])
+        )  # [batch, pos, d_mlp]
         if self.cfg["act_fn"].lower() == "solu_ln":
             x = self.hook_post_ln(self.ln(x))
         x = (
-            amp_einsum("bpm,md->bpd", x, self.W_out,
-                       self.cfg["use_bfloat16_matmul"])
+            amp_einsum("bpm,md->bpd", x, self.W_out, self.cfg["use_bfloat16_matmul"])
             + self.b_out
         )  # [batch, pos, d_model]
         return x * self.cfg["neuron_scale"]
@@ -426,7 +423,7 @@ class TransformerBlock(nn.Module):
         self.attn = Attention(self.cfg)
         self.hook_attn_out = HookPoint()  # [batch, pos, d_model]
 
-        if cfg['shortformer_pos']:
+        if cfg["shortformer_pos"]:
             self.hook_attn_input = HookPoint()  # [batch, pos, d_model]
         # Note that resid_pre of layer k+1 is resid_post of layer k - given for convenience
         self.hook_resid_pre = HookPoint()  # [batch, pos, d_model]
@@ -439,10 +436,11 @@ class TransformerBlock(nn.Module):
 
         self.attn_dropout = nn.Dropout(self.cfg["pdrop"])
         self.mlp_dropout = nn.Dropout(self.cfg["pdrop"])
+
     def forward(self, x, pos_embed):
         resid_pre = self.hook_resid_pre(x)  # [batch, pos, d_model]
-        if self.cfg['shortformer_pos']:
-            attn_input = self.hook_attn_input(resid_pre+pos_embed)
+        if self.cfg["shortformer_pos"]:
+            attn_input = self.hook_attn_input(resid_pre + pos_embed)
             attn_out = self.hook_attn_out(
                 self.attn(self.ln1(resid_pre), self.ln1(attn_input))
             )  # [batch, pos, d_model]
@@ -454,18 +452,21 @@ class TransformerBlock(nn.Module):
             attn_out = self.attn_dropout(attn_out)
         if self.cfg["attn_only"]:
             resid_post = self.hook_resid_post(
-                resid_pre + attn_out)  # [batch, pos, d_model]
+                resid_pre + attn_out
+            )  # [batch, pos, d_model]
         else:
             resid_mid = self.hook_resid_mid(
-                resid_pre + attn_out)  # [batch, pos, d_model]
-            
+                resid_pre + attn_out
+            )  # [batch, pos, d_model]
+
             mlp_out = self.hook_mlp_out(
                 self.mlp(self.ln2(resid_mid))
             )  # [batch, pos, d_model]
             if self.cfg["use_dropout"]:
                 mlp_out = self.mlp_dropout(mlp_out)
             resid_post = self.hook_resid_post(
-                resid_mid + mlp_out)  # [batch, pos, d_model]
+                resid_mid + mlp_out
+            )  # [batch, pos, d_model]
         return resid_post
 
 
@@ -501,8 +502,7 @@ class Transformer(HookedRootModule):
     def forward(self, tokens, return_type="loss"):
         # Input x is either a batch of tokens ([batch, pos]) or a text string
         embed = self.hook_embed(self.embed(tokens))  # [batch, pos, d_model]
-        pos_embed = self.hook_pos_embed(
-            self.pos_embed(tokens))  # [batch, pos, d_model]
+        pos_embed = self.hook_pos_embed(self.pos_embed(tokens))  # [batch, pos, d_model]
         if not self.cfg["shortformer_pos"]:
             residual = embed + pos_embed  # [batch, pos, d_model]
         else:
@@ -513,11 +513,11 @@ class Transformer(HookedRootModule):
             # Note that each block includes skip connections, so we don't need
             # residual + block(residual)
             residual = block(residual, pos_embed)  # [batch, pos, d_model]
-        
+
         residual = self.ln_final(residual)
         logits = self.unembed(residual.to(torch.float32))  # [batch, pos, d_vocab]
 
-        if return_type=="loss":
+        if return_type == "loss":
             return loss_fn(logits, tokens)
         else:
             return logits

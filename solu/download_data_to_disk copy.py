@@ -6,22 +6,27 @@ import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
 import numpy as np
-import einops 
+import einops
 import argparse
 import datasets
 from datasets import disable_caching
+
 disable_caching()
-datasets.config.IN_MEMORY_MAX_SIZE = 3*10**11
+datasets.config.IN_MEMORY_MAX_SIZE = 3 * 10**11
 import time
+
 start_time = time.time()
 
-c4_urls = [f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz" for i in range(200)]
+c4_urls = [
+    f"https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.{i:0>5}-of-01024.json.gz"
+    for i in range(200)
+]
 
 
-dataset = load_dataset('json', data_files=c4_urls, split='train')
+dataset = load_dataset("json", data_files=c4_urls, split="train")
 print(dataset)
 print(dataset[0])
-print('Loaded!', time.time()-start_time)
+print("Loaded!", time.time() - start_time)
 # for key in dataset.features:
 #     if key != "text":
 #         print("Deleting feature", key)
@@ -44,7 +49,7 @@ print('Loaded!', time.time()-start_time)
 #     text_list = [full_text[i*length:(i+1)*length] for i in range(div)]
 #     tokens = tokenizer(text_list, return_tensors='np', padding=True)['input_ids'].flatten()
 #     tokens = tokens[tokens!=tokenizer.pad_token_id]
-    
+
 #     n = len(tokens)
 #     curr_batch_size = n//(seq_len-1)
 #     tokens = tokens[:(seq_len-1)*curr_batch_size]
