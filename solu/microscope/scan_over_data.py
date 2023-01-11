@@ -4,12 +4,12 @@ import solu.utils as sutils
 
 torch.set_grad_enabled(False)
 
-# Code to automatically update the EasyTransformer code as its edited without restarting the kernel
+# Code to automatically update the HookedTransformer code as its edited without restarting the kernel
 @dataclass
 class Config:
     model_name: str = "solu-1l"
     data_name: str = "c4"
-    max_tokens: int = int(2e9)
+    max_tokens: int = -1
     debug: bool = False
     batch_size: int = 8
     version: int = 1
@@ -57,6 +57,8 @@ else:
     new_config = {
         "debug": True,
         "use_activation_stats": True,
+        "model_name":"gpt2-small",
+        "data_name":"openwebtext"
     }
     cfg = dict(default_cfg.to_dict())
     cfg.update(new_config)
@@ -80,7 +82,7 @@ tens = torch.load("/workspace/solu_outputs/debug/full_pred_log_probs/code/solu-3
 i = 870
 j = 532
 print(tens[i, j])
-model = EasyTransformer.from_pretrained("solu-3l")
+model = HookedTransformer.from_pretrained("solu-3l")
 dataset, tokens_name = sutils.get_dataset("c4")
 tokens = dataset[i:i+1]['tokens'].cuda()
 with torch.autocast("cuda", torch.bfloat16):
@@ -91,7 +93,7 @@ print(plps[0, j])
 
 
 class PredLogProbs:
-    def __init__(self, cfg: Config, model: EasyTransformer):
+    def __init__(self, cfg: Config, model: HookedTransformer):
         self.cfg = cfg
         self.debug = self.cfg.debug
         if self.debug:
@@ -139,7 +141,7 @@ class PredLogProbs:
 
 
 class BaseMaxTracker:
-    def __init__(self, cfg: Config, model: EasyTransformer, name: str):
+    def __init__(self, cfg: Config, model: HookedTransformer, name: str):
         self.cfg = cfg
         self.debug = self.cfg.debug
         self.model = model
@@ -173,7 +175,7 @@ class BaseMaxTracker:
 
 
 class NeuronMaxAct(BaseMaxTracker):
-    def __init__(self, cfg: Config, model: EasyTransformer):
+    def __init__(self, cfg: Config, model: HookedTransformer):
         super().__init__(cfg, model, name="neuron_max_act")
 
         self.stores = []
@@ -189,7 +191,7 @@ class NeuronMaxAct(BaseMaxTracker):
             if self.model.cfg.act_fn == "solu_ln":
                 hook_fn = partial(update_max_act_hook, store=store)
                 self.model.blocks[layer].mlp.hook_mid.add_hook(hook_fn)
-            elif self.model.cfg.act_fn in ["gelu", "relu"]:
+            elif self.model.cfg.act_fn in ["gelu", "relu", "gelu_new"]:
                 hook_fn = partial(update_max_act_hook, store=store)
                 self.model.blocks[layer].mlp.hook_post.add_hook(hook_fn)
             else:
@@ -205,7 +207,7 @@ class NeuronMaxAct(BaseMaxTracker):
 class HeadLogitAttr(BaseMaxTracker):
     """Stores the max positive and max negative contribution from each head to the correct logit"""
 
-    def __init__(self, cfg: Config, model: EasyTransformer):
+    def __init__(self, cfg: Config, model: HookedTransformer):
         super().__init__(cfg, model, name="head_logit_attr")
 
         self.W_OU = einsum(
@@ -277,7 +279,7 @@ class HeadLogitAttr(BaseMaxTracker):
 class NeuronLogitAttr(BaseMaxTracker):
     """Stores the max direct contribution from each neuron to the correct logit."""
 
-    def __init__(self, cfg: Config, model: EasyTransformer):
+    def __init__(self, cfg: Config, model: HookedTransformer):
         super().__init__(cfg, model, name="neuron_logit_attr")
 
         self.W_out_U = einsum(
@@ -379,7 +381,7 @@ class ActivationStats:
 # %%
 if not cfg.debug:
     wandb.init(config=cfg.to_dict())
-model = EasyTransformer.from_pretrained(cfg.model_name)  # type: ignore
+model = HookedTransformer.from_pretrained(cfg.model_name)  # type: ignore
 dataset = sutils.get_dataset(cfg.data_name)
 if len(dataset) * model.cfg.n_ctx < cfg.max_tokens or cfg.max_tokens < 0:
     print("Resetting max tokens:", cfg.max_tokens, "to", len(dataset) * model.cfg.n_ctx)
@@ -402,16 +404,18 @@ if cfg.use_activation_stats:
     trackers.append(ActivationStats(cfg, model))
 
 # %%
-with torch.autocast("cuda", torch.bfloat16):
-    for index in tqdm.tqdm(range(0, cfg.max_tokens // model.cfg.n_ctx, cfg.batch_size)):  # type: ignore
-        tokens = dataset[index : index + cfg.batch_size]["tokens"].cuda()  # type: ignore
-        logits = model(tokens).detach()
-        for tracker in trackers:
-            tracker.step(logits, tokens)
-        if not cfg.debug:
-            wandb.log({"tokens": index * model.cfg.n_ctx}, step=index)
-for tracker in trackers:
-    tracker.finish()
-if not cfg.debug:
-    wandb.finish()
+try:
+    with torch.autocast("cuda", torch.bfloat16):
+        for index in tqdm.tqdm(range(0, cfg.max_tokens // model.cfg.n_ctx, cfg.batch_size)):  # type: ignore
+            tokens = dataset[index : index + cfg.batch_size]["tokens"].cuda()  # type: ignore
+            logits = model(tokens).detach()
+            for tracker in trackers:
+                tracker.step(logits, tokens)
+            if not cfg.debug:
+                wandb.log({"tokens": index * model.cfg.n_ctx}, step=index)
+finally:
+    for tracker in trackers:
+        tracker.finish()
+    if not cfg.debug:
+        wandb.finish()
 # %%

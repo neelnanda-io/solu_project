@@ -14,7 +14,7 @@ import argparse
 import datasets
 from typing import Tuple, Union
 from IPython import get_ipython
-from easy_transformer.utils import get_corner
+from transformer_lens.utils import get_corner
 
 CACHE_DIR = Path.home() / ("cache")
 REPO_ROOT = Path.home() / ("hf_repos/")
