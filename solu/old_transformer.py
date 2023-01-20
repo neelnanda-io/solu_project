@@ -1,12 +1,12 @@
-from easy_transformer.hook_points import HookPoint, HookedRootModule
+from transformer_lens.hook_points import HookPoint, HookedRootModule
 import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import random
 
-from easy_transformer.utils import gelu_new
-from easy_transformer.utils import lm_cross_entropy_loss as loss_fn
+from transformer_lens.utils import gelu_new
+from transformer_lens.utils import lm_cross_entropy_loss as loss_fn
 import einops
 
 # Define network architecture

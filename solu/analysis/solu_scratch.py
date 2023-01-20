@@ -49,8 +49,8 @@ from pprint import pprint
 import math
 
 import pysvelte
-from easy_transformer import EasyTransformer
-from easy_transformer.hook_points import HookedRootModule, HookPoint
+from transformer_lens import HookedTransformer
+from transformer_lens.hook_points import HookedRootModule, HookPoint
 from rich import print
 
 

@@ -196,8 +196,9 @@ class MaxActStore:
 
 
 # %%
-# Write code to define a max act store per layer, and a hook to update them
-if __name__ == "__main__":
+# Old code, has since been moved + substantially improved to scan_over_data.py
+
+if False:
     with torch.autocast("cuda", torch.float32):
         for model_name in [
             "solu-1l-c4-code",
@@ -212,7 +213,7 @@ if __name__ == "__main__":
             # for model_name in ['solu-2l-old', 'solu-4l-old', 'solu-6l-old', 'solu-8l-old', 'solu-10l-old']:
             print("Starting microscope for model_name:", model_name)
             mcfg = MicroscopeConfig(model_name=model_name)
-            model = EasyTransformer.from_pretrained(mcfg.model_name)
+            model = HookedTransformer.from_pretrained(mcfg.model_name)
             print(model.cfg)
             if model.cfg.tokenizer_name == "EleutherAI/gpt-neox-20b":
                 print("Using Pile data")

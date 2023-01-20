@@ -226,7 +226,7 @@ def arg_parse_update_cfg(default_cfg):
 
 
 # %%
-def get_dataset(dataset_name) -> Union[datasets.Dataset, datasets.DatasetDict]:
+def get_dataset(dataset_name) -> datasets.Dataset:
     if dataset_name == "c4-code":
         # Pre shuffled!
         tokens_c4_code = datasets.load_from_disk(
@@ -252,6 +252,8 @@ def get_dataset(dataset_name) -> Union[datasets.Dataset, datasets.DatasetDict]:
         tokens_owt = datasets.load_from_disk("/workspace/data/openwebtext_tokens.hf")
         tokens_owt = tokens_owt.with_format("torch")
         return tokens_owt
+    else:
+        raise ValueError(f"Invalid dataset name {dataset_name}")
 
 
 def get_next_version(DIR):
@@ -382,4 +384,4 @@ class MaxStore:
         return mas
 
     def __repr__(self):
-        return f"MaxActStore(top_k={self.top_k}, length={self.length}, counter={self.counter}, total_updates={self.total_updates}, device={self.device})\n Max Acts: {get_corner(self.max)}\n Indices: {get_corner(self.index)}"
+        return f"MaxStore(top_k={self.top_k}, length={self.length}, counter={self.counter}, total_updates={self.total_updates}, device={self.device})\n Max Values: {get_corner(self.max)}\n Indices: {get_corner(self.index)}"

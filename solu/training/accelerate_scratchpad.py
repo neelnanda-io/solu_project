@@ -58,8 +58,8 @@ from pprint import pprint
 from dataclasses import dataclass
 from typing import Union, Tuple, List, Dict, Any, Optional
 
-from easy_transformer.EasyTransformerConfig import EasyTransformerConfig
-from easy_transformer import EasyTransformer
+from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
+from transformer_lens import HookedTransformer
 from rich import print as rprint
 
 # %%
@@ -67,7 +67,7 @@ from IPython import get_ipython
 
 try:
     ipython = get_ipython()
-    # Code to automatically update the EasyTransformer code as its edited without restarting the kernel
+    # Code to automatically update the HookedTransformer code as its edited without restarting the kernel
     ipython.magic("load_ext autoreload")
     ipython.magic("autoreload 2")
     import plotly.io as pio
@@ -90,11 +90,11 @@ class TrainingConfig:
     debug: bool = True
     initializer_scale: float = 1.0
 
-    model_cfg: EasyTransformerConfig = None
+    model_cfg: HookedTransformerConfig = None
 
     @classmethod
     def from_dict(cls, **cfg_dict):
-        model_config_keys = EasyTransformerConfig.__dataclass_fields__.keys()
+        model_config_keys = HookedTransformerConfig.__dataclass_fields__.keys()
 
         model_cfg_dict = {k: v for k, v in cfg_dict.items() if k in model_config_keys}
         training_cfg_dict = {
@@ -113,7 +113,7 @@ class TrainingConfig:
                 model_cfg_dict["d_model"] // model_cfg_dict["d_head"]
             )
         model_cfg_dict["attn_scale_full"] = True
-        model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
+        model_cfg = HookedTransformerConfig.from_dict(model_cfg_dict)
         # if cfg_dict['debug']:
         #     rprint(training_cfg_dict)
         #     rprint(model_cfg_dict)
@@ -132,7 +132,7 @@ cfg = TrainingConfig.from_dict(
 rprint(cfg)
 
 # %%
-model = EasyTransformer.from_config(cfg.model_cfg)
+model = HookedTransformer.from_config(cfg.model_cfg)
 rprint(model)
 
 # %%
@@ -187,7 +187,7 @@ def main():
         f"Config for {cfg['n_layers']}L v{cfg['version']} with {cfg['n_params']/1e6:.2f}M params"
     )
 
-    model = EasyTransformer.from_config(cfg.model_cfg)
+    model = HookedTransformer.from_config(cfg.model_cfg)
     for name, param in model.named_parameters():
         scale = 1600 / cfg.d_model
         if "W_" in name:

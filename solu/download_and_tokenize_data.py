@@ -24,7 +24,7 @@ dataset.save_to_disk(f"/workspace/data/{dataset_name}_text.hf")
 # dataset = datasets.load_from_disk("/workspace/data/openwebtext_text.hf")
 print(dataset)
 
-from easy_transformer.utils import tokenize_and_concatenate
+from transformer_lens.utils import tokenize_and_concatenate
 
 # tokenizer = AutoTokenizer.from_pretrained("gpt2")
 # tokenizer = AutoTokenizer.from_pretrained("NeelNanda/gpt-neox-tokenizer-digits")

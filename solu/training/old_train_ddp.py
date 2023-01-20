@@ -7,7 +7,7 @@ from neel.imports import *
 from accelerate import Accelerator
 from accelerate.utils import set_seed, write_basic_config
 from accelerate import notebook_launcher
-from easy_transformer.utils import tokenize_and_concatenate
+from transformer_lens.utils import tokenize_and_concatenate
 import argparse
 
 #! SoLU Imports
@@ -230,8 +230,8 @@ def old_main(mixed_precision="bf16", seed: int = 42):
     # device = accelerator.device
 
     if cfg["use_ET"]:
-        from easy_transformer.EasyTransformerConfig import EasyTransformerConfig
-        from easy_transformer import EasyTransformer
+        from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
+        from transformer_lens import HookedTransformer
         from rich import print as rprint
         from dataclasses import dataclass
 
@@ -240,7 +240,7 @@ def old_main(mixed_precision="bf16", seed: int = 42):
 
         try:
             ipython = get_ipython()
-            # Code to automatically update the EasyTransformer code as its edited without restarting the kernel
+            # Code to automatically update the HookedTransformer code as its edited without restarting the kernel
             ipython.magic("load_ext autoreload")
             ipython.magic("autoreload 2")
             import plotly.io as pio
@@ -260,11 +260,11 @@ def old_main(mixed_precision="bf16", seed: int = 42):
             #     seed: 12345
             #     batches_per_step: int = 1
 
-            model_cfg: EasyTransformerConfig = None
+            model_cfg: HookedTransformerConfig = None
 
             @classmethod
             def from_dict(cls, **cfg_dict):
-                model_config_keys = EasyTransformerConfig.__dataclass_fields__.keys()
+                model_config_keys = HookedTransformerConfig.__dataclass_fields__.keys()
 
                 model_cfg_dict = {
                     k: v for k, v in cfg_dict.items() if k in model_config_keys
@@ -285,7 +285,7 @@ def old_main(mixed_precision="bf16", seed: int = 42):
                         model_cfg_dict["d_model"] // model_cfg_dict["d_head"]
                     )
 
-                model_cfg = EasyTransformerConfig.from_dict(model_cfg_dict)
+                model_cfg = HookedTransformerConfig.from_dict(model_cfg_dict)
 
                 # rprint(training_cfg_dict)
                 # rprint(model_cfg_dict)
@@ -303,7 +303,7 @@ def old_main(mixed_precision="bf16", seed: int = 42):
         # rprint(config)
 
         # %%
-        model = EasyTransformer.from_config(config.model_cfg)
+        model = HookedTransformer.from_config(config.model_cfg)
         accelerator.print(model.cfg)
         # rprint(model)
     else:

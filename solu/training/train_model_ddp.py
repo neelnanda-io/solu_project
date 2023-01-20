@@ -51,8 +51,8 @@ pio.renderers.default = "vscode"
 import solu.utils as solu_utils
 from solu.transformer import Transformer
 
-from easy_transformer.evals import evaluate, induction_loss
-from easy_transformer.utils import lm_cross_entropy_loss
+from transformer_lens.evals import evaluate, induction_loss
+from transformer_lens.utils import lm_cross_entropy_loss
 
 
 INITIALIZATION_DIR = Path.home() / ("solu_project/initialization")
@@ -246,7 +246,7 @@ def init_tokenizer(cfg):
 
 
 from neel.imports import *
-from easy_transformer.utils import tokenize_and_concatenate
+from transformer_lens.utils import tokenize_and_concatenate
 
 
 def create_dataset(cfg, tokenizer, test=False):
@@ -810,7 +810,7 @@ cfg = create_cfg(dict(n_layers=4, batch_size_per_device=32))
 model = Transformer(cfg)
 tokenizer = init_tokenizer(cfg)
 model.tokenizer = tokenizer
-import easy_transformer.evals as evals
+import transformer_lens.evals as evals
 model.load_state_dict(torch.load(Path.home()/"solu_project/saved_models/v145_4L512W_solu_repo/model_final.pth"))
 model.cuda()
 parallel_model = torch.nn.DataParallel(model)

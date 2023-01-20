@@ -2,9 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from easy_transformer.utils import gelu_new
+from transformer_lens.utils import gelu_new
 import einops
-from easy_transformer.utils import lm_cross_entropy_loss as loss_fn
+from transformer_lens.utils import lm_cross_entropy_loss as loss_fn
 
 # A helper class to get access to intermediate activations (inspired by Garcon)
 # It's a dummy module that is the identity function by default
@@ -58,7 +58,7 @@ class HookPoint(nn.Module):
 
     def layer(self):
         # Returns the layer index if the name has the form 'blocks.{layer}.{...}'
-        # Helper function that's mainly useful on EasyTransformer
+        # Helper function that's mainly useful on HookedTransformer
         # If it doesn't have this form, raises an error -
         split_name = self.name.split(".")
         return int(split_name[1])

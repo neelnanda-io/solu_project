@@ -12,7 +12,7 @@ dataset = load_dataset("json", data_files=c4_urls, split="train")
 # dataset.save_to_disk(Path.home()/f'data/c4_train_{n}_text.hf')
 print(dataset)
 # # %%
-from easy_transformer.utils import tokenize_and_concatenate
+from transformer_lens.utils import tokenize_and_concatenate
 
 tokenizer = AutoTokenizer.from_pretrained("NeelNanda/gpt-neox-tokenizer-digits")
 # %%

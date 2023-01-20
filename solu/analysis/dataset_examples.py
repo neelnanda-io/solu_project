@@ -46,7 +46,7 @@ import sys
 from pprint import pprint
 
 import pysvelte
-from easy_transformer import *
+from transformer_lens import *
 
 if "ipykernel_launcher" in os.path.basename(sys.argv[0]):
     %matplotlib inline

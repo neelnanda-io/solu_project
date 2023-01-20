@@ -46,7 +46,7 @@ print(repo)
 
 
 # # %%
-# from easy_transformer.utils import tokenize_and_concatenate
+# from transformer_lens.utils import tokenize_and_concatenate
 # tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 # tok_data = tokenize_and_concatenate(trunc_dataset, tokenizer)
