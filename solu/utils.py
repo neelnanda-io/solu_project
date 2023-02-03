@@ -227,33 +227,50 @@ def arg_parse_update_cfg(default_cfg):
 
 # %%
 def get_dataset(dataset_name) -> datasets.Dataset:
-    if dataset_name == "c4-code":
-        # Pre shuffled!
-        tokens_c4_code = datasets.load_from_disk(
-            "/workspace/data/c4_code_valid_tokens.hf"
-        )
-        tokens_c4_code = tokens_c4_code.with_format("torch")
-        return tokens_c4_code
-    elif dataset_name == "c4":
-        tokens_c4 = datasets.load_from_disk(f"/workspace/data/c4_valid_tokens.hf")
-        tokens_c4 = tokens_c4.with_format("torch")
-        return tokens_c4
-    elif dataset_name == "code":
-        tokens_code = datasets.load_from_disk(f"/workspace/data/code_valid_tokens.hf")
-        tokens_code = tokens_code.with_format("torch")
-        return tokens_code
-    elif dataset_name == "pile":
-        # Pre shuffled
-        tokens_pile = datasets.load_from_disk("/workspace/data/pile_valid_tokens.hf")
-        tokens_pile = tokens_pile.with_format("torch")
-        return tokens_pile
-    elif dataset_name == "openwebtext":
-        # Pre shuffled
-        tokens_owt = datasets.load_from_disk("/workspace/data/openwebtext_tokens.hf")
-        tokens_owt = tokens_owt.with_format("torch")
-        return tokens_owt
-    else:
-        raise ValueError(f"Invalid dataset name {dataset_name}")
+    dataset_names = {
+        "c4-code": "c4_code_valid_tokens.hf",
+        "c4": "c4_valid_tokens.hf",
+        "code": "code_valid_tokens.hf",
+        "pile": "pile_big_int32.hf",
+        # "pile": "pile_valid_tokens.hf",
+        # "pile-big": "pile_int16.hf",
+        "openwebtext": "openwebtext_tokens.hf",
+    }
+    tokens = datasets.load_from_disk("/workspace/data/" + dataset_names[dataset_name])
+    tokens = tokens.with_format("torch")
+    return tokens
+    # if dataset_name == "c4-code":
+    #     # Pre shuffled!
+    #     tokens_c4_code = datasets.load_from_disk(
+    #         "/workspace/data/c4_code_valid_tokens.hf"
+    #     )
+    #     tokens_c4_code = tokens_c4_code.with_format("torch")
+    #     return tokens_c4_code
+    # elif dataset_name == "c4":
+    #     tokens_c4 = datasets.load_from_disk(f"/workspace/data/c4_valid_tokens.hf")
+    #     tokens_c4 = tokens_c4.with_format("torch")
+    #     return tokens_c4
+    # elif dataset_name == "code":
+    #     tokens_code = datasets.load_from_disk(f"/workspace/data/code_valid_tokens.hf")
+    #     tokens_code = tokens_code.with_format("torch")
+    #     return tokens_code
+    # elif dataset_name == "pile":
+    #     # Pre shuffled
+    #     tokens_pile = datasets.load_from_disk("/workspace/data/pile_valid_tokens.hf")
+    #     tokens_pile = tokens_pile.with_format("torch")
+    #     return tokens_pile
+    # elif dataset_name == "pile":
+    #     # Pre shuffled
+    #     tokens_pile = datasets.load_from_disk("/workspace/data/pile_valid_tokens.hf")
+    #     tokens_pile = tokens_pile.with_format("torch")
+    #     return tokens_pile
+    # elif dataset_name == "openwebtext":
+    #     # Pre shuffled
+    #     tokens_owt = datasets.load_from_disk("/workspace/data/openwebtext_tokens.hf")
+    #     tokens_owt = tokens_owt.with_format("torch")
+    #     return tokens_owt
+    # else:
+    #     raise ValueError(f"Invalid dataset name {dataset_name}")
 
 
 def get_next_version(DIR):

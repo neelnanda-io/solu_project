@@ -12,7 +12,7 @@ class Config:
     max_tokens: int = -1
     debug: bool = False
     batch_size: int = 8
-    version: int = 1
+    version: int = 3
     overwrite: bool = False
     use_pred_log_probs: bool = False
     use_max_neuron_act: bool = False
